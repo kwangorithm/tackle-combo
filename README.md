@@ -5,7 +5,14 @@
 
 설치나 빌드가 필요 없는 정적 웹앱(HTML/CSS/JS)이고, 서버도 필요 없습니다.
 
-## 실행
+## 바로 쓰기
+
+👉 **https://kwangorithm.github.io/tackle-combo/** (GitHub Pages 활성화 후)
+
+GitHub Pages 켜기: 저장소 **Settings → Pages → Build and deployment**에서
+Source `Deploy from a branch`, Branch `main` / `/ (root)` 선택 후 Save.
+
+## 로컬 실행
 
 ```bash
 git clone https://github.com/kwangorithm/tackle-combo && cd tackle-combo
