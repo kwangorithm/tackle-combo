@@ -178,7 +178,8 @@
   function renderResult(c, rec, field, err, steps) {
     const L = E.LABELS;
     const skyIcon = { sunny: '☀️', cloudy: '☁️', rain: '🌧️' }[c.sky];
-    let html = '<section class="card">';
+    let html = session && rec.combos.length ? renderLive(steps, field) : '';
+    html += '<section class="card">';
     html += `<div class="section-title" style="margin-top:0"><h2>${esc(field.name)} · ${dateLabel(ui.dayOffset)} ${L.time[c.slot]}</h2></div>`;
     html += '<div class="cond-grid">';
     html += condBox('계절', L.season[c.season]);
@@ -201,7 +202,7 @@
       return html;
     }
 
-    html += session ? renderLive(steps, field) : renderRotation(steps);
+    if (!session) html += renderRotation(steps);
 
     html += '<div class="section-title"><h2>오늘의 태클 조합</h2><span class="muted small">점수 = 조건 적합도</span></div>';
     const rankName = ['메인', '서브', '비장의 카드'];
@@ -291,16 +292,6 @@
         : esc(step.tip);
       const memo = (data.lures.find((l) => l.id === activeLure[cb.category]) || {}).memo;
       html += `<div class="now">
-        <div class="now-label">${cur.hold ? '패턴 유지' : `지금 던질 것 · ${CIRCLED[cur.index]} ${esc(step.label)}`}</div>
-        <h3>${esc(cb.categoryLabel)}</h3>
-        ${photos[activeLure[cb.category]] ? `<div class="live-photo">${thumb(activeLure[cb.category], 'lg')}</div>` : ''}
-        <div class="chips lure-pick">${lures.map((l) => `<button type="button" class="chip pick" data-action="pick-lure" data-cat="${esc(cb.category)}" data-lure="${esc(l.id)}" aria-pressed="${l.id === activeLure[cb.category]}">${l.favorite ? '★ ' : ''}${esc(l.name)}</button>`).join('')}</div>
-        <dl class="kv">
-          <dt>태클</dt><dd>${s ? `<b>${esc(s.name)}</b> <span class="small muted">${esc(s.rod || '')}</span>` : '<span class="warn">담당 태클 없음</span>'}</dd>
-          <dt>포인트</dt><dd>${sp ? `<b>${esc(sp.name)}</b>` : `<span class="small muted">${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`}</dd>
-          <dt>액션</dt><dd>${esc(cb.action)}${memo ? `<br><span class="small">📝 ${esc(memo)}</span>` : ''}</dd>
-        </dl>
-        <p class="hold-tip">${holdTip}</p>
         <div class="timer-box" id="liveTimer">
           <div class="t-row"><span class="t-big">--:--</span><span class="t-sub"></span></div>
           <div class="bar"><span></span></div>
@@ -311,11 +302,21 @@
             <button type="button" class="btn ghost sm" data-action="toggle-awake" aria-pressed="${ui.awake !== false}">${ui.awake !== false ? '📱 화면 켜둠' : '📱 화면 자동꺼짐'}</button>
           </div>
         </div>
+        <div class="now-label">${cur.hold ? '패턴 유지' : `지금 던질 것 · ${CIRCLED[cur.index]} ${esc(step.label)}`}</div>
+        <h3>${esc(cb.categoryLabel)}</h3>
+        ${photos[activeLure[cb.category]] ? `<div class="live-photo">${thumb(activeLure[cb.category], 'lg')}</div>` : ''}
+        <div class="chips lure-pick">${lures.map((l) => `<button type="button" class="chip pick" data-action="pick-lure" data-cat="${esc(cb.category)}" data-lure="${esc(l.id)}" aria-pressed="${l.id === activeLure[cb.category]}">${l.favorite ? '★ ' : ''}${esc(l.name)}</button>`).join('')}</div>
         <div class="event-btns">
           <button class="btn ev nobite" data-action="event" data-type="nobite" data-cat="${esc(cb.category)}">🙅<span>입질 없음</span><small>다음 루어로</small></button>
           <button class="btn ev bite" data-action="event" data-type="bite" data-cat="${esc(cb.category)}">👀<span>입질</span><small>패턴 유지</small></button>
           <button class="btn ev catch" data-action="event" data-type="catch" data-cat="${esc(cb.category)}">🎣<span>잡았다!</span><small>조과 기록</small></button>
         </div>
+        <p class="hold-tip">${holdTip}</p>
+        <dl class="kv">
+          <dt>태클</dt><dd>${s ? `<b>${esc(s.name)}</b> <span class="small muted">${esc(s.rod || '')}</span>` : '<span class="warn">담당 태클 없음</span>'}</dd>
+          <dt>포인트</dt><dd>${sp ? `<b>${esc(sp.name)}</b>` : `<span class="small muted">${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`}</dd>
+          <dt>액션</dt><dd>${esc(cb.action)}${memo ? `<br><span class="small">📝 ${esc(memo)}</span>` : ''}</dd>
+        </dl>
       </div>`;
     }
 
@@ -633,7 +634,8 @@
     if (action === 'start-session') {
       session = { id: uid('t'), fieldId: ui.fieldId, date: dateStr(0), startedAt: Date.now(), round: 0, events: [] };
       restartTimer();
-      saveSession(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+      saveSession(); render();
+      setTimeout(() => { const live = document.querySelector('.live'); if (live) live.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
       updateWakeLock();
       // 앱이 뒤로 가 있을 때 알림으로 알려주려면 권한이 필요 (버튼을 누른 이 순간에만 물어볼 수 있음)
       if (ui.alarm !== false && 'Notification' in window && Notification.permission === 'default') {
