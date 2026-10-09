@@ -536,7 +536,7 @@
     if (!list.length) return html + '<div class="card empty">등록된 루어가 없어요.</div>';
     list.forEach((l) => {
       html += `<div class="card item">${thumb(l.id)}<div class="body">
-        <h3>${l.favorite ? '<span class="star">★</span> ' : ''}${esc(l.name)} <span class="badge">${esc(catLabel(l.category))}</span></h3>
+        <h3>${l.favorite ? '<span class="star">★</span> ' : ''}${esc(l.name)} <span class="badge">${esc(catLabel(l.category))}</span>${data.setups.some((st) => (st.categories || []).includes(l.category)) ? '' : ' <span class="badge warn-badge">⚠ 태클 없음</span>'}</h3>
         <p>${esc([l.brand, l.size].filter(Boolean).join(' · '))}</p>
         ${(l.colors || []).length ? `<div class="chips" style="margin-top:6px">${l.colors.map((c) => `<span class="chip">${esc(c)}</span>`).join('')}</div>` : ''}
         ${l.memo ? `<p>📝 ${esc(l.memo)}</p>` : ''}
@@ -862,7 +862,8 @@
   }
 
   function openEditor(kind, item, newPhoto) {
-    editing = { kind, id: item ? item.id : null, photo: newPhoto };
+    // 기존 루어는 카테고리를 자동으로 바꾸지 않음 (새 루어만 이름으로 추정)
+    editing = { kind, id: item ? item.id : null, photo: newPhoto, catTouched: !!item };
     const it = item || {};
     const photoNow = newPhoto || (item && photos[item.id]);
     let body = kind === 'field' ? '' : `<div id="photoField">${editorPhotoHtml(photoNow)}</div>`;
@@ -882,6 +883,7 @@
       body += text('name', '루어 이름', it.name, '예: 비전 원텐') +
         `<div class="two">${text('brand', '브랜드', it.brand, '예: 메가배스')}${text('size', '사이즈/무게', it.size, '예: 3/8oz')}</div>` +
         selectF('category', '카테고리', it.category || 'bottom', catOpts()) +
+        '<p class="hint small" id="catHint"></p><div id="tacklePanel" class="tackle-panel"></div>' +
         text('colors', '보유 컬러 (쉼표로 구분)', (it.colors || []).join(', '), '예: 고스트 와카사기, 차트 백') +
         check('favorite', '자신 있는 루어 (우선 추천)', it.favorite) +
         area('memo', '나만의 운용법', it.memo, '예: 저킹 후 3~5초 스테이');
@@ -897,7 +899,64 @@
     }
     $('#editorBody').innerHTML = body;
     $('#editor').showModal();
+    if (kind === 'lure') refreshTacklePanel();
   }
+
+  // ---------- 루어 편집기: 카테고리 자동 추정 & 태클 연결 ----------
+  function lureFormValues() {
+    const f = $('#editorForm').elements;
+    return { name: f.name.value, size: f.size.value, category: f.category.value };
+  }
+
+  function guessFromName() {
+    if (!editing || editing.kind !== 'lure' || editing.catTouched) return;
+    const g = E.guessCategory(lureFormValues().name);
+    const hint = $('#catHint');
+    if (g) {
+      $('#editorForm').elements.category.value = g.category;
+      hint.innerHTML = `🔎 '${esc(g.keyword)}' → <b>${esc(E.CATEGORIES[g.category].label)}</b>(으)로 골랐어요. 다르면 바꾸세요.`;
+    } else {
+      hint.textContent = lureFormValues().name.trim() ? '카테고리를 직접 골라주세요.' : '';
+    }
+  }
+
+  function refreshTacklePanel() {
+    const el = $('#tacklePanel');
+    if (!el) return;
+    const lure = lureFormValues();
+    const r = E.tackleFor(lure, data.setups);
+    const prev = el.querySelector('details');
+    const wasOpen = prev ? prev.open : null;
+    const checked = new Set(Array.from(el.querySelectorAll('[data-link-setup]:checked')).map((x) => x.value));
+    const cat = E.CATEGORIES[lure.category];
+    let h = '';
+    if (r.band) h += `<p>⚖️ ${r.grams}g → <b>${esc(r.band.label)}</b> 권장</p>`;
+    if (r.linked.length) {
+      h += `<p>✅ 이 루어를 쓸 태클: ${r.linked.map((x) => `<b>${esc(x.setup.name)}</b>${x.fit === 0 ? ' <span class="warn">(무게 안 맞을 수 있음)</span>' : ''}`).join(', ')}</p>`;
+    } else {
+      h += `<p class="warn">⚠ '${esc(cat ? cat.short : lure.category)}'을(를) 담당하는 태클이 없어요. 이 루어를 쓸 태클을 연결하세요.</p>`;
+    }
+    if (r.candidates.length) {
+      const open = !r.linked.length || !!wasOpen; // 담당 태클이 없으면 항상 펼침
+      h += `<details${open ? ' open' : ''}><summary>${r.linked.length ? '다른 태클에도 연결' : '태클 연결하기'}</summary>` +
+        r.candidates.map((c) => `<label class="check"><input type="checkbox" data-link-setup value="${esc(c.setup.id)}"${checked.has(c.setup.id) ? ' checked' : ''}>
+          <span>${esc(c.setup.name)} <span class="muted small">${esc(TYPE_LABEL[c.setup.type] || '')} ${esc(c.setup.power || '')}</span>${c.recommended ? ' <span class="badge">추천</span>' : ''}</span></label>`).join('') +
+        '<p class="muted">체크한 태클의 담당 카테고리에 추가돼요.</p></details>';
+    }
+    el.innerHTML = h;
+  }
+
+  $('#editorForm').addEventListener('input', (e) => {
+    if (!editing || editing.kind !== 'lure') return;
+    if (e.target.name === 'name') guessFromName();
+    if (e.target.name === 'name' || e.target.name === 'size') refreshTacklePanel();
+  });
+  $('#editorForm').addEventListener('change', (e) => {
+    if (!editing || editing.kind !== 'lure' || e.target.name !== 'category') return;
+    editing.catTouched = true;
+    $('#catHint').textContent = '';
+    refreshTacklePanel();
+  });
 
   $('#editorForm').addEventListener('submit', (e) => {
     const f = e.target;
@@ -917,6 +976,11 @@
         colors: v('colors').split(',').map((s) => s.trim()).filter(Boolean),
         favorite: f.elements.favorite.checked, memo: v('memo'),
       };
+      // 체크한 태클이 이 카테고리를 담당하도록 연결
+      document.querySelectorAll('[data-link-setup]:checked').forEach((cb) => {
+        const st = data.setups.find((x) => x.id === cb.value);
+        if (st && !(st.categories || []).includes(obj.category)) st.categories = (st.categories || []).concat(obj.category);
+      });
     } else {
       const num = (n) => (v(n) === '' ? null : Number(v(n)));
       obj = {

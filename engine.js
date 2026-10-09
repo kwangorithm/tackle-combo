@@ -600,8 +600,95 @@
     return `https://calendar.google.com/calendar/render?${q}`;
   }
 
+  // ---------- 루어 자동 분류 & 태클 매칭 (AI 없이 낚시 용어 사전) ----------
+  // 여러 키워드가 걸리면 가장 긴(구체적인) 키워드가 이긴다. 예: "돌라이브쉬림프" → BFS (돌라이브 → 수직 피네스보다 우선)
+  const LURE_KEYWORDS = {
+    topwater: ['탑워터', '크롤러', '프롭', '버즈베이트', '버즈', '프로그', '개구리', '다지', '노이지', '와퍼', '플로퍼', '휠베이트',
+      'topwater', 'crawler', 'prop', 'buzzbait', 'buzz', 'frog', 'dodge', 'whopper', 'plopper'],
+    popper: ['팝퍼', '포퍼', '팝엑스', '펜슬', '도그워킹', '워킹베이트', '스플래시', 'popper', 'popx', 'pop-x', 'pencil', 'splash'],
+    minnow: ['미노우', '저크베이트', '저크', '원텐', '쓰리디', 'minnow', 'jerkbait', 'jerk', 'oneten', 'ito'],
+    moving: ['스피너베이트', '스피너', '바이브레이션', '바이브', '립리스', '치터', '채터베이트', '채터', '블레이드', '스윔베이트', '스윔지그', '하이피처',
+      'spinnerbait', 'spinner', 'vibration', 'vib', 'lipless', 'chatter', 'blade', 'swimbait', 'swimjig'],
+    crank: ['크랭크베이트', '크랭크', '섀드', '쉐드', '샤드', 'crankbait', 'crank', 'shad'],
+    bottom: ['센코', '텍사스', '노싱커', '프리리그', '캐롤라이나', '스플릿샷', '불플랫', '스트레이트웜', '스틱웜', '호그', '크로우', '야마센코',
+      'senko', 'texas', 'nosinker', 'freerig', 'carolina', 'splitshot', 'bullflat', 'hog', 'craw'],
+    cover: ['러버지그', '풋볼지그', '펀칭', '헤비커버', '스몰러버지그', 'rubberjig', 'footballjig', 'punch', 'jig'],
+    vertical: ['다운샷', '드롭샷', '네꼬', '네코', '와키', '레그웜', '돌라이브', '쉐이크', 'dropshot', 'downshot', 'neko', 'wacky', 'legworm'],
+    midstroll: ['미드스트롤', '달달이', '호버스트롤', '플래시j', '플래시제이', '지그헤드', 'midstroll', 'hoverstroll', 'flashj', 'jighead'],
+    bfs: ['bfs', '쉬림프', '컷테일', '경량텍사스', '돌라이브쉬림프', 'shrimp', 'cuttail'],
+  };
+
+  const normKey = (s) => String(s || '').toLowerCase().replace(/[\s_"'″”()\[\]·.]/g, '');
+
+  /** 루어 이름 → { category, keyword } | null */
+  function guessCategory(text) {
+    const t = normKey(text);
+    if (!t) return null;
+    let best = null;
+    Object.keys(LURE_KEYWORDS).forEach((cat) => {
+      LURE_KEYWORDS[cat].forEach((kw) => {
+        const k = normKey(kw);
+        if (t.includes(k) && (!best || k.length > best.len)) best = { category: cat, keyword: kw, len: k.length };
+      });
+    });
+    return best && { category: best.category, keyword: best.keyword };
+  }
+
+  /** "3/8oz", "1/2 oz", "0.9~1.3g", "7g" → 그램 (범위면 큰 값) | null */
+  function parseWeight(text) {
+    const t = String(text || '').toLowerCase().replace(/\s+/g, '');
+    const oz = t.match(/(\d+)\/(\d+)oz/) || t.match(/(\d+(?:\.\d+)?)oz/);
+    if (oz) {
+      const v = oz[2] ? Number(oz[1]) / Number(oz[2]) : Number(oz[1]);
+      return Math.round(v * 28.35 * 10) / 10;
+    }
+    const g = t.match(/(\d+(?:\.\d+)?)(?:~(\d+(?:\.\d+)?))?g(?![a-z])/);
+    if (g) return Number(g[2] || g[1]);
+    return null;
+  }
+
+  const POWER_ORDER = ['UL', 'L', 'ML', 'M', 'MH', 'H', 'XH'];
+  // 무게대별로 잘 맞는 태클 (2: 딱 맞음, 1: 쓸 만함)
+  const WEIGHT_BANDS = [
+    { max: 3.5, label: '스피닝 UL~L', fit: (s) => (s.type === 'spinning' && ['UL', 'L'].includes(s.power) ? 2 : s.type === 'spinning' || s.type === 'bfs' ? 1 : 0) },
+    { max: 7, label: 'BFS·스피닝 L~ML', fit: (s) => (s.type === 'bfs' ? 2 : s.type === 'spinning' || (s.type === 'bait' && ['L', 'ML'].includes(s.power)) ? 1 : 0) },
+    { max: 14, label: '베이트 ML~M', fit: (s) => (s.type === 'bait' && ['ML', 'M'].includes(s.power) ? 2 : s.type === 'bait' && s.power === 'MH' ? 1 : s.type === 'bfs' && s.power === 'ML' ? 1 : 0) },
+    { max: 28, label: '베이트 M~MH', fit: (s) => (s.type === 'bait' && ['M', 'MH'].includes(s.power) ? 2 : s.type === 'bait' && ['ML', 'H'].includes(s.power) ? 1 : 0) },
+    { max: Infinity, label: '베이트 MH~H', fit: (s) => (s.type === 'bait' && ['MH', 'H', 'XH'].includes(s.power) ? 2 : s.type === 'bait' && s.power === 'M' ? 1 : 0) },
+  ];
+
+  function weightBand(grams) {
+    if (grams == null || !(grams > 0)) return null;
+    return WEIGHT_BANDS.find((b) => grams < b.max) || WEIGHT_BANDS[WEIGHT_BANDS.length - 1];
+  }
+
+  /**
+   * 루어 → 이 루어를 쓸 태클
+   * linked: 카테고리를 이미 담당하는 태클(무게 적합도 포함), candidates: 연결 안 된 태클 중 추천순
+   */
+  function tackleFor(lure, setups) {
+    const grams = parseWeight(`${lure.size || ''} ${lure.name || ''}`);
+    const band = weightBand(grams);
+    const fitOf = (s) => (band ? band.fit(s) : null);
+    const linked = (setups || []).filter((s) => (s.categories || []).includes(lure.category))
+      .map((s) => ({ setup: s, fit: fitOf(s) }));
+    const roleOf = (c) => ROLES[c];
+    const candidates = (setups || []).filter((s) => !(s.categories || []).includes(lure.category))
+      .map((s) => {
+        const fit = fitOf(s);
+        // 무게를 모르면 같은 역할(탐색/확인/짜내기)의 카테고리를 담당하는 태클을 추천
+        const sameRole = (s.categories || []).some((c) => roleOf(c) === roleOf(lure.category));
+        return { setup: s, fit, score: (fit == null ? 0 : fit * 2) + (sameRole ? 1 : 0) };
+      })
+      .sort((a, b) => b.score - a.score || POWER_ORDER.indexOf(a.setup.power) - POWER_ORDER.indexOf(b.setup.power));
+    // 추천: 무게가 딱 맞는 태클, 무게를 모르면 같은 역할(탐색/확인/짜내기)을 담당하는 태클
+    candidates.forEach((c) => { c.recommended = c.fit == null ? c.score >= 1 : c.fit === 2; });
+    return { grams, band, linked, candidates, recommended: candidates.filter((c) => c.recommended) };
+  }
+
   const api = {
     STRUCTURES, CATEGORIES, LABELS, SLOT_HOUR, ROLES, STEPS, EVENT_SCORE,
+    guessCategory, parseWeight, weightBand, tackleFor,
     tripSegments, tripStats, tripReport, condLine, durLabel,
     tripEvent, googleCalendarUrl, utcStamp,
     seasonOf, windClass, skyClass, shiftClarity,

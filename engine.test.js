@@ -213,3 +213,61 @@ test('너무 짧은 출조도 캘린더에는 최소 30분으로', () => {
   const ev = E.tripEvent({ fieldName: 'A', date: '2026-10-10', startedAt: 0, endedAt: 5 * 60000, events: [] }, () => null);
   assert.strictEqual(ev.end - ev.start, 30 * 60000);
 });
+
+// ---------- 루어 자동 분류 & 태클 매칭 ----------
+test('루어 이름으로 카테고리를 추정한다 (가장 구체적인 키워드 우선)', () => {
+  const g = (n) => (E.guessCategory(n) || {}).category || null;
+  assert.strictEqual(g('게리 센코 5인치'), 'bottom');
+  assert.strictEqual(g('메가배스 비전 원텐 110'), 'minnow');
+  assert.strictEqual(g('O.S.P 하이피처 3/8oz'), 'moving');
+  assert.strictEqual(g('돌라이브스틱 3"'), 'vertical');
+  assert.strictEqual(g('돌라이브 쉬림프 3"'), 'bfs');
+  assert.strictEqual(g('POP-X'), 'popper');
+  assert.strictEqual(g('레이드재팬 다지'), 'topwater');
+  assert.strictEqual(g('Flash J 1.3g'), 'midstroll');
+  assert.strictEqual(g('풋볼 지그 1/2oz'), 'cover');
+  assert.strictEqual(g('KVD 1.5 squarebill crankbait'), 'crank');
+  assert.strictEqual(g('Neko rig'), 'vertical');
+  assert.strictEqual(g('이름 모를 루어'), null);
+  assert.strictEqual(g(''), null);
+});
+
+test('사이즈 표기에서 무게(g)를 읽는다', () => {
+  assert.strictEqual(E.parseWeight('3/8oz'), 10.6);
+  assert.strictEqual(E.parseWeight('1/2 oz'), 14.2);
+  assert.strictEqual(E.parseWeight('0.9~1.3g'), 1.3);
+  assert.strictEqual(E.parseWeight('7g'), 7);
+  assert.strictEqual(E.parseWeight('110mm'), null);
+  assert.strictEqual(E.parseWeight('5인치'), null);
+});
+
+test('무게에 맞는 태클을 고르고, 담당 태클이 없으면 연결 후보를 추천한다', () => {
+  // 1.3g 지그헤드: 담당 태클(오로치 F1 스피닝 L)은 무게도 맞음
+  let r = E.tackleFor({ name: '플래시 J', size: '1.3g', category: 'midstroll' }, SEED.setups);
+  assert.strictEqual(r.band.label, '스피닝 UL~L');
+  assert.deepStrictEqual(r.linked.map((x) => [x.setup.id, x.fit]), [['s6', 2]]);
+
+  // 크랭크 3/8oz: 이미 연결된 원텐스틱(M)·그레블코드(ML)
+  r = E.tackleFor({ name: '크랭크', size: '3/8oz', category: 'crank' }, SEED.setups);
+  assert.deepStrictEqual(r.linked.map((x) => x.setup.id).sort(), ['s3', 's4']);
+
+  // 담당 태클이 없는 상황: 1/2oz 러버지그인데 커버 담당 태클을 지운 경우 → MH 베이트가 1순위 추천
+  const setups = SEED.setups.map((s) => Object.assign({}, s, { categories: s.categories.filter((c) => c !== 'cover') }));
+  r = E.tackleFor({ name: '풋볼지그', size: '1/2oz', category: 'cover' }, setups);
+  assert.strictEqual(r.linked.length, 0);
+  assert.strictEqual(r.band.label, '베이트 M~MH'); // 1/2oz = 14.2g
+  assert.ok(r.recommended.length > 0);
+  assert.strictEqual(r.recommended[0].setup.type, 'bait');
+  assert.ok(r.recommended.every((c) => c.setup.type === 'bait'));
+
+  // 무게를 모르면 같은 역할(짜내기)을 담당하는 태클을 추천
+  r = E.tackleFor({ name: '노 무게 네꼬', size: '', category: 'vertical' }, setups.map((s) => Object.assign({}, s, { categories: s.categories.filter((c) => c !== 'vertical') })));
+  assert.strictEqual(r.grams, null);
+  assert.ok(['s6', 's7'].includes(r.candidates[0].setup.id), r.candidates[0].setup.id);
+});
+
+test('추천 표시는 무게가 잘 맞는 태클에만', () => {
+  const setups = SEED.setups.map((s) => Object.assign({}, s, { categories: s.categories.filter((c) => c !== 'crank') }));
+  const r = E.tackleFor({ name: '크랭크', size: '3/8oz', category: 'crank' }, setups);
+  assert.deepStrictEqual(r.recommended.map((c) => c.setup.id).sort(), ['s3', 's4']); // 베이트 ML·M
+});
