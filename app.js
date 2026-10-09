@@ -170,6 +170,7 @@
     const rec = E.recommend(data, cond, field.id, 3, { bonus: E.historyBonus(log, field.id, cond.season) });
     const steps = E.buildRotation(rec.combos.concat(rec.others), session);
     $('#todayResult').innerHTML = renderResult(cond, rec, field, err, steps);
+    tickTimer();
   }
 
   function condBox(k, v) { return `<div class="cond"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
@@ -224,7 +225,6 @@
   const CIRCLED = ['①', '②', '③', '④', '⑤'];
   const EVENT_LABEL = { nobite: '🙅 입질 없음', bite: '👀 입질', catch: '🎣 잡았다' };
   const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-  const minutesSince = (t) => Math.max(0, Math.floor((Date.now() - t) / 60000));
 
   function stepSpot(step, round) {
     const spots = step.combo.spots;
@@ -264,7 +264,6 @@
     const cur = E.currentStep(steps, session);
     const catches = session.events.filter((e) => e.type === 'catch').length;
     const bites = session.events.filter((e) => e.type === 'bite').length;
-    const lastAt = session.events.length ? session.events[session.events.length - 1].t : session.startedAt;
     let html = `<section class="card live">
       <div class="live-head"><span class="dot" aria-hidden="true"></span><b>현장 모드</b>
         <span class="muted small">${esc(field.name)} · ${hhmm(session.startedAt)} 시작${round ? ` · ${round + 1}번째 포인트` : ''}</span>
@@ -280,7 +279,11 @@
       const lures = lureChoices(cb.category, step);
       const sp = stepSpot(step, round);
       const s = cb.setup;
-      const since = minutesSince(lastAt);
+      // 타이머 기준: 이 단계 권장 시간 + 연장분. 알람은 화면과 상관없이 세션 값으로 판단
+      const activeName = (data.lures.find((l) => l.id === activeLure[cb.category]) || {}).name || cb.categoryLabel;
+      session.timerMinutes = step.minutes + (session.timerExtra || 0);
+      session.timerLabel = activeName;
+      saveSession();
       const holdTip = cur.hold
         ? (cur.last.type === 'catch'
           ? '🎣 잡았어요! 같은 패턴 반복 — 비슷한 구조물·수심을 이어서 공략하세요.'
@@ -298,7 +301,16 @@
           <dt>액션</dt><dd>${esc(cb.action)}${memo ? `<br><span class="small">📝 ${esc(memo)}</span>` : ''}</dd>
         </dl>
         <p class="hold-tip">${holdTip}</p>
-        <p class="timer small${since >= step.minutes ? ' over' : ''}" id="liveTimer" data-since="${lastAt}" data-minutes="${step.minutes}">${timerText(lastAt, step.minutes)}</p>
+        <div class="timer-box" id="liveTimer">
+          <div class="t-row"><span class="t-big">--:--</span><span class="t-sub"></span></div>
+          <div class="bar"><span></span></div>
+          <div class="t-btns">
+            <button type="button" class="btn ghost sm" data-action="timer-plus">+5분</button>
+            <button type="button" class="btn ghost sm" data-action="timer-reset">↺ 다시 시작</button>
+            <button type="button" class="btn ghost sm" data-action="toggle-alarm" aria-pressed="${ui.alarm !== false}">${ui.alarm !== false ? '🔔 알람 켬' : '🔕 알람 끔'}</button>
+            <button type="button" class="btn ghost sm" data-action="toggle-awake" aria-pressed="${ui.awake !== false}">${ui.awake !== false ? '📱 화면 켜둠' : '📱 화면 자동꺼짐'}</button>
+          </div>
+        </div>
         <div class="event-btns">
           <button class="btn ev nobite" data-action="event" data-type="nobite" data-cat="${esc(cb.category)}">🙅<span>입질 없음</span><small>다음 루어로</small></button>
           <button class="btn ev bite" data-action="event" data-type="bite" data-cat="${esc(cb.category)}">👀<span>입질</span><small>패턴 유지</small></button>
@@ -325,21 +337,91 @@
     return html;
   }
 
-  function timerText(since, minutes) {
-    const m = minutesSince(since);
-    return m >= minutes
-      ? `⏱ 마지막 기록 후 ${m}분 — 권장 ${minutes}분 지남, 반응 없으면 '입질 없음'으로 넘기세요`
-      : `⏱ 마지막 기록 후 ${m}분 / 권장 ${minutes}분`;
+  // ---------- 현장 타이머 & 알람 ----------
+  function timerStart() {
+    if (session.timerStart) return session.timerStart;
+    return session.events.length ? session.events[session.events.length - 1].t : session.startedAt;
+  }
+  function restartTimer() { session.timerStart = Date.now(); session.timerExtra = 0; }
+  const fmtSec = (sec) => { const s = Math.floor(Math.abs(sec)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
+
+  function tickTimer() {
+    if (!session || !session.timerMinutes) return;
+    const start = timerStart();
+    const total = session.timerMinutes * 60;
+    const elapsed = (Date.now() - start) / 1000;
+    const remain = total - elapsed;
+    const el = document.getElementById('liveTimer');
+    if (el) {
+      el.querySelector('.t-big').textContent = remain >= 0 ? fmtSec(remain) : `+${fmtSec(remain)}`;
+      el.querySelector('.t-sub').textContent = remain >= 0
+        ? `남음 · 권장 ${session.timerMinutes}분`
+        : "⏰ 시간 됐어요! 입질 없으면 '입질 없음'으로 넘기세요";
+      el.querySelector('.bar span').style.width = `${Math.min(100, (elapsed / total) * 100)}%`;
+      el.classList.toggle('over', remain < 0);
+    }
+    // 같은 타이머(시작 시각+시간)에 대해 알람은 한 번만
+    const key = `${start}|${session.timerMinutes}`;
+    if (remain <= 0 && session.alarmKey !== key) {
+      session.alarmKey = key;
+      saveSession();
+      if (ui.alarm !== false) fireAlarm(session.timerLabel || '');
+    }
+  }
+  setInterval(tickTimer, 1000);
+
+  let audioCtx = null;
+  function unlockAudio() {
+    // 모바일 브라우저는 사용자가 화면을 누른 순간에만 소리를 켤 수 있어서, 현장 모드 버튼을 누를 때 준비해 둔다
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { audioCtx = null; }
+  }
+  function beep() {
+    if (!audioCtx) return;
+    try {
+      const t0 = audioCtx.currentTime + 0.05;
+      for (let i = 0; i < 3; i++) {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        const t = t0 + i * 0.45;
+        o.type = 'square';
+        o.frequency.value = i === 2 ? 1320 : 990;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+        o.connect(g).connect(audioCtx.destination);
+        o.start(t);
+        o.stop(t + 0.35);
+      }
+    } catch (e) { /* noop */ }
+  }
+  function fireAlarm(label) {
+    beep();
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+      navigator.serviceWorker.ready.then((reg) => reg.showNotification('⏰ 루어 바꿀 시간이에요', {
+        body: `${label} 권장 시간이 지났어요. 입질 없으면 다음 루어로!`,
+        tag: 'tackle-timer', renotify: true, vibrate: [400, 200, 400], icon: 'icon.svg',
+      })).catch(() => {});
+    }
   }
 
-  setInterval(() => {
-    const el = document.getElementById('liveTimer');
-    if (!el) return;
-    const since = Number(el.dataset.since);
-    const minutes = Number(el.dataset.minutes);
-    el.textContent = timerText(since, minutes);
-    el.classList.toggle('over', minutesSince(since) >= minutes);
-  }, 30000);
+  let wakeLock = null;
+  async function updateWakeLock() {
+    try {
+      const want = session && ui.awake !== false && document.visibilityState === 'visible' && 'wakeLock' in navigator;
+      if (want && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!want && wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+      }
+    } catch (e) { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => { updateWakeLock(); tickTimer(); });
 
   function endSession() {
     if (session.events.length) {
@@ -547,18 +629,39 @@
     const b = e.target.closest('[data-action]');
     if (!b) return;
     const { action, kind, id } = b.dataset;
+    if (action === 'start-session' || session) unlockAudio();
     if (action === 'start-session') {
       session = { id: uid('t'), fieldId: ui.fieldId, date: dateStr(0), startedAt: Date.now(), round: 0, events: [] };
+      restartTimer();
       saveSession(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+      updateWakeLock();
+      // 앱이 뒤로 가 있을 때 알림으로 알려주려면 권한이 필요 (버튼을 누른 이 순간에만 물어볼 수 있음)
+      if (ui.alarm !== false && 'Notification' in window && Notification.permission === 'default') {
+        try { Notification.requestPermission(); } catch (err) { /* noop */ }
+      }
     } else if (action === 'event' && session) {
       const cat = b.dataset.cat;
       session.events.push({ t: Date.now(), type: b.dataset.type, cat, lureId: activeLure[cat] || null, round: session.round || 0 });
+      restartTimer();
       saveSession(); updateToday();
       if (navigator.vibrate) navigator.vibrate(b.dataset.type === 'catch' ? [60, 40, 60] : 30);
     } else if (action === 'undo-event' && session) {
-      session.events.pop(); saveSession(); updateToday();
+      session.events.pop();
+      const prev = session.events[session.events.length - 1];
+      session.timerStart = prev ? prev.t : session.startedAt;
+      session.timerExtra = 0;
+      saveSession(); updateToday();
     } else if (action === 'next-round' && session) {
-      session.round = (session.round || 0) + 1; saveSession(); updateToday();
+      session.round = (session.round || 0) + 1; restartTimer(); saveSession(); updateToday();
+    } else if (action === 'timer-plus' && session) {
+      session.timerExtra = (session.timerExtra || 0) + 5; saveSession(); updateToday();
+    } else if (action === 'timer-reset' && session) {
+      restartTimer(); saveSession(); updateToday();
+    } else if (action === 'toggle-alarm') {
+      ui.alarm = ui.alarm === false; saveUi(); updateToday();
+      if (ui.alarm) beep(); // 켤 때 소리 미리 듣기
+    } else if (action === 'toggle-awake') {
+      ui.awake = ui.awake === false; saveUi(); updateWakeLock(); updateToday();
     } else if (action === 'pick-lure') {
       activeLure[b.dataset.cat] = b.dataset.lure;
       if (session) { session.lures = Object.assign({}, activeLure); saveSession(); }
@@ -566,7 +669,7 @@
     } else if (action === 'end-session' && session) {
       const n = session.events.filter((ev) => ev.type === 'catch').length;
       if (confirm(session.events.length ? `출조를 종료하고 기록을 저장할까요? (🎣 ${n}마리)` : '기록 없이 현장 모드를 종료할까요?')) {
-        endSession(); render();
+        endSession(); render(); updateWakeLock();
       }
     } else if (action === 'delete-log') {
       if (confirm('이 출조 기록을 삭제할까요?')) { log = log.filter((s) => s.id !== id); saveLog(); render(); }
@@ -752,6 +855,7 @@
   ui.slot = defaultSlot();
   ui.dayOffset = 0;
   render();
+  updateWakeLock(); // 진행 중인 출조가 있으면 화면 켜두기 재개
   P.all().then((all) => {
     photos = all;
     if (Object.keys(all).length && ui.tab !== 'today') render();

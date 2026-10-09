@@ -222,8 +222,20 @@ dialog h2 { font-size: 18px; }
 .chip.pick { cursor: pointer; background: var(--surface); }
 .chip.pick[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
 .hold-tip { margin: 10px 0 4px; font-weight: 600; }
-.timer { margin: 4px 0 10px; color: var(--muted); }
-.timer.over { color: var(--neg); font-weight: 700; }
+.timer-box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 6px 0 10px; }
+.t-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.t-big { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--accent); }
+.t-sub { font-size: 13px; color: var(--muted); font-weight: 600; }
+.timer-box .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 6px 0 8px; }
+.timer-box .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
+.timer-box.over { border-color: var(--neg); background: var(--neg-soft); animation: blink 1.2s ease-in-out 3; }
+.timer-box.over .t-big, .timer-box.over .t-sub { color: var(--neg); }
+.timer-box.over .bar span { background: var(--neg); }
+@keyframes blink { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .timer-box.over { animation: none; } }
+.t-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.t-btns .btn { padding: 6px 9px; font-size: 12px; }
+.t-btns [aria-pressed="false"] { opacity: .6; }
 .event-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .btn.ev { display: grid; justify-items: center; gap: 2px; padding: 12px 4px; font-size: 24px; min-height: 92px; }
 .btn.ev span { font-size: 14px; }

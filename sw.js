@@ -1,5 +1,5 @@
 // 오프라인용 앱 셸 캐시 (날씨 API는 항상 네트워크)
-const CACHE = 'tackle-combo-v4';
+const CACHE = 'tackle-combo-v5';
 const SHELL = ['./', './index.html', './style.css', './engine.js', './photos.js', './seed.js', './app.js', './icon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -26,5 +26,16 @@ self.addEventListener('fetch', (e) => {
         return res;
       })
       .catch(() => caches.match(e.request)),
+  );
+});
+
+// 타이머 알림을 누르면 앱으로 돌아가기
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      return self.clients.openWindow('./index.html');
+    }),
   );
 });
