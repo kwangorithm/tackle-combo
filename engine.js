@@ -285,7 +285,7 @@
       })
       .filter((x) => x.m > 0)
       .sort((a, b) => b.m - a.m)
-      .slice(0, 2)
+      .slice(0, 3)
       .map((x) => x.spot);
   }
 
@@ -345,12 +345,20 @@
    * state: { setups, lures, fields }
    * 반환: { combos(상위 n), others, missing(보유 루어 없는 상위 카테고리), packing, colorAdvice, notes }
    */
-  function recommend(state, c, fieldId, n) {
+  function recommend(state, c, fieldId, n, opts) {
     n = n || 3;
+    const bonus = (opts && opts.bonus) || {};
     const field = (state.fields || []).find((f) => f.id === fieldId) || null;
     const advice = colorAdvice(c);
     const catScores = Object.keys(CATEGORIES)
-      .map((id) => Object.assign({ id }, scoreCategory(id, c)))
+      .map((id) => {
+        const s = scoreCategory(id, c);
+        if (bonus[id]) {
+          s.score += bonus[id].v;
+          s.factors.unshift({ label: bonus[id].label, v: bonus[id].v });
+        }
+        return Object.assign({ id }, s);
+      })
       .sort((a, b) => b.score - a.score);
 
     const combos = [];
@@ -394,11 +402,91 @@
     };
   }
 
+  // ---------- 로테이션 & 현장 모드 ----------
+
+  // 카테고리 → 로테이션 역할 (탐색 → 확인 → 짜내기)
+  const ROLES = {
+    topwater: 'search', moving: 'search', crank: 'search', minnow: 'search',
+    bottom: 'mid', cover: 'mid', bfs: 'mid',
+    vertical: 'finesse', midstroll: 'finesse', popper: 'finesse',
+  };
+  const ROLE_ORDER = ['search', 'mid', 'finesse'];
+  const STEPS = {
+    search: { label: '탐색', minutes: 20, tip: '넓고 빠르게 — 활성 배스가 있는지 먼저 확인' },
+    mid: { label: '확인', minutes: 30, tip: '구조물·바닥을 천천히 — 반응 본 수심에 집중' },
+    finesse: { label: '짜내기', minutes: 30, tip: '예민한 배스를 제자리에서 오래 — 사이즈·컬러 다운' },
+  };
+  // 현장 기록이 그 출조 동안 카테고리 점수에 주는 영향
+  const EVENT_SCORE = { nobite: -2, bite: 1, catch: 3 };
+
+  function sessionAdjust(session) {
+    const adj = {};
+    ((session && session.events) || []).forEach((e) => {
+      adj[e.cat] = (adj[e.cat] || 0) + (EVENT_SCORE[e.type] || 0);
+    });
+    return adj;
+  }
+
+  /** 추천 조합들 → 탐색/확인/짜내기 순서의 로테이션 (현장 기록 반영) */
+  function buildRotation(combos, session) {
+    const adj = sessionAdjust(session);
+    const scored = combos.map((cb) => Object.assign({}, cb, {
+      adjScore: cb.score + (adj[cb.category] || 0),
+      role: ROLES[cb.category] || 'mid',
+    }));
+    const byScore = (a, b) => b.adjScore - a.adjScore;
+    let usable = scored.filter((x) => x.adjScore > -2).sort(byScore);
+    // 하루 종일 꽝이라 다 감점돼도 다음 포인트에서 던질 건 있어야 함
+    if (usable.length < 3) usable = scored.slice().sort(byScore).slice(0, Math.max(3, usable.length));
+    const steps = [];
+    ROLE_ORDER.forEach((role) => {
+      const best = usable.find((x) => x.role === role);
+      if (best) steps.push(best);
+    });
+    // 비어 있는 역할은 남은 상위 조합으로 채워 3단계 확보
+    usable.forEach((x) => { if (steps.length < 3 && !steps.includes(x)) steps.push(x); });
+    steps.sort((a, b) => (ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)) || byScore(a, b));
+    // 조건이 한쪽으로 크게 기울면(5점 이상) 가장 유리한 단계부터
+    const top = steps.slice().sort(byScore)[0];
+    if (top && steps[0] !== top && top.adjScore - steps[0].adjScore >= 5) {
+      steps.splice(steps.indexOf(top), 1);
+      steps.unshift(top);
+    }
+    return steps.map((cb) => Object.assign({ role: cb.role, combo: cb }, STEPS[cb.role]));
+  }
+
+  /** 지금 던질 단계: 입질·조과가 있으면 그 패턴 유지, '입질 없음'은 다음 단계로 */
+  function currentStep(steps, session) {
+    const round = (session && session.round) || 0;
+    const evs = ((session && session.events) || []).filter((e) => (e.round || 0) === round);
+    const last = evs[evs.length - 1] || null;
+    if (last && last.type !== 'nobite') {
+      const i = steps.findIndex((s) => s.combo.category === last.cat);
+      if (i >= 0) return { index: i, hold: true, exhausted: false, last };
+    }
+    const tried = new Set(evs.filter((e) => e.type === 'nobite').map((e) => e.cat));
+    const i = steps.findIndex((s) => !tried.has(s.combo.category));
+    if (i < 0) return { index: -1, hold: false, exhausted: true, last, tried };
+    return { index: i, hold: false, exhausted: false, last, tried };
+  }
+
+  /** 지난 출조 기록 중 같은 필드·같은 계절의 조과 → 카테고리 보너스(최대 +3) */
+  function historyBonus(log, fieldId, season) {
+    const n = {};
+    (log || [])
+      .filter((s) => s.fieldId === fieldId && (!season || seasonOf(Number(String(s.date).slice(5, 7))) === season))
+      .forEach((s) => (s.catches || []).forEach((c) => { n[c.cat] = (n[c.cat] || 0) + 1; }));
+    const out = {};
+    Object.keys(n).forEach((k) => { out[k] = { v: Math.min(3, n[k]), label: `내 조과 ${n[k]}마리` }; });
+    return out;
+  }
+
   const api = {
-    STRUCTURES, CATEGORIES, LABELS, SLOT_HOUR,
+    STRUCTURES, CATEGORIES, LABELS, SLOT_HOUR, ROLES, STEPS, EVENT_SCORE,
     seasonOf, windClass, skyClass, shiftClarity,
     deriveConditions, scoreCategory, bestSpots, pickSetup,
     colorAdvice, recommend,
+    sessionAdjust, buildRotation, currentStep, historyBonus,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TackleEngine = api;

@@ -6,6 +6,8 @@
   const STORE_KEY = 'tackle-combo-v1';
   const UI_KEY = 'tackle-combo-ui-v1';
   const PACK_KEY = 'tackle-combo-pack-v1';
+  const SESSION_KEY = 'tackle-combo-session-v1';
+  const LOG_KEY = 'tackle-combo-log-v1';
 
   // ---------- 저장소 ----------
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -23,6 +25,13 @@
   const ui = Object.assign({ tab: 'today', fieldId: null, dayOffset: 0, slot: null, lureFilter: '' }, readJSON(UI_KEY, {}));
   let overrides = {};
   const weatherCache = {};
+
+  // 현장 모드(진행 중 출조)와 지난 출조 기록
+  let session = readJSON(SESSION_KEY, null);
+  let log = readJSON(LOG_KEY, []);
+  const activeLure = Object.assign({}, session && session.lures); // 카테고리 → 지금 쓰는 루어 id
+  function saveSession() { if (session) writeJSON(SESSION_KEY, session); else { try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* noop */ } } }
+  function saveLog() { writeJSON(LOG_KEY, log); }
 
   function save() { writeJSON(STORE_KEY, data); }
   function saveUi() { writeJSON(UI_KEY, ui); }
@@ -75,8 +84,11 @@
     if (!data.fields.length) {
       return '<div class="card empty">먼저 <b>필드</b> 탭에서 자주 가는 저수지·낚시터를 등록하세요.</div>';
     }
+    if (session && !data.fields.some((f) => f.id === session.fieldId)) { session = null; saveSession(); }
+    if (session) { ui.fieldId = session.fieldId; ui.dayOffset = 0; } // 현장 모드 중엔 필드·날짜 고정
     if (!data.fields.some((f) => f.id === ui.fieldId)) ui.fieldId = data.fields[0].id;
     if (!ui.slot) ui.slot = defaultSlot();
+    const lock = session ? ' disabled' : '';
     const fieldOpts = data.fields.map((f) => `<option value="${esc(f.id)}"${f.id === ui.fieldId ? ' selected' : ''}>${esc(f.name)} · ${E.LABELS.field[f.type] || ''}</option>`).join('');
     const dayOpts = [0, 1, 2, 3, 4, 5, 6].map((o) => `<option value="${o}"${o === ui.dayOffset ? ' selected' : ''}>${dateLabel(o)}</option>`).join('');
     const slots = Object.keys(E.SLOT_HOUR).map((s) => `<button type="button" data-slot="${s}" aria-pressed="${s === ui.slot}">${E.LABELS.time[s].replace(/\(.*\)/, '')}</button>`).join('');
@@ -84,8 +96,8 @@
     return `
       <section class="card">
         <div class="controls">
-          <label class="full">어디로 가세요?<select id="fieldSel">${fieldOpts}</select></label>
-          <label>언제?<select id="daySel">${dayOpts}</select></label>
+          <label class="full">어디로 가세요?<select id="fieldSel"${lock}>${fieldOpts}</select></label>
+          <label>언제?<select id="daySel"${lock}>${dayOpts}</select></label>
           <label>시간대<div class="seg" id="slotSeg">${slots}</div></label>
         </div>
         <details class="adjust">
@@ -153,13 +165,14 @@
     try { weather = await fetchWeather(field); } catch (e) { err = e; }
     if (seq !== updateSeq) return; // 더 최신 요청이 있음
     const cond = E.deriveConditions(weather, dateStr(ui.dayOffset), ui.slot, field, overrides);
-    const rec = E.recommend(data, cond, field.id, 3);
-    $('#todayResult').innerHTML = renderResult(cond, rec, field, err);
+    const rec = E.recommend(data, cond, field.id, 3, { bonus: E.historyBonus(log, field.id, cond.season) });
+    const steps = E.buildRotation(rec.combos.concat(rec.others), session);
+    $('#todayResult').innerHTML = renderResult(cond, rec, field, err, steps);
   }
 
   function condBox(k, v) { return `<div class="cond"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
 
-  function renderResult(c, rec, field, err) {
+  function renderResult(c, rec, field, err, steps) {
     const L = E.LABELS;
     const skyIcon = { sunny: '☀️', cloudy: '☁️', rain: '🌧️' }[c.sky];
     let html = '<section class="card">';
@@ -185,6 +198,8 @@
       return html;
     }
 
+    html += session ? renderLive(steps, field) : renderRotation(steps);
+
     html += '<div class="section-title"><h2>오늘의 태클 조합</h2><span class="muted small">점수 = 조건 적합도</span></div>';
     const rankName = ['메인', '서브', '비장의 카드'];
     rec.combos.forEach((cb, i) => { html += renderCombo(cb, i, rankName[i]); });
@@ -201,6 +216,148 @@
         '</ul></details>';
     }
     return html;
+  }
+
+  // ---------- 로테이션 & 현장 모드 ----------
+  const CIRCLED = ['①', '②', '③', '④', '⑤'];
+  const EVENT_LABEL = { nobite: '🙅 입질 없음', bite: '👀 입질', catch: '🎣 잡았다' };
+  const hhmm = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const minutesSince = (t) => Math.max(0, Math.floor((Date.now() - t) / 60000));
+
+  function stepSpot(step, round) {
+    const spots = step.combo.spots;
+    return spots.length ? spots[round % spots.length] : null;
+  }
+
+  function stepLine(step, i, round) {
+    const sp = stepSpot(step, round);
+    return `<b>${CIRCLED[i]} ${esc(step.label)} · ${step.minutes}분</b> — ${esc(E.CATEGORIES[step.combo.category].short)}
+      <span class="small">(${esc(step.combo.lures.map((x) => x.lure.name).join(', '))}${sp ? ` @ ${esc(sp.name)}` : ''})</span>`;
+  }
+
+  function renderRotation(steps) {
+    if (!steps.length) return '';
+    const startBtn = ui.dayOffset === 0
+      ? '<button class="btn primary big" data-action="start-session">▶ 현장 모드 시작</button>'
+      : '<p class="muted small">현장 모드는 출조 당일에 시작할 수 있어요.</p>';
+    return `<section class="card rotation">
+      <div class="section-title" style="margin-top:0"><h2>🔁 오늘의 로테이션</h2></div>
+      <ol class="rot">${steps.map((s, i) => `<li>${stepLine(s, i, 0)}<div class="muted small">${esc(s.tip)}</div></li>`).join('')}</ol>
+      <p class="muted small">현장 모드에서 입질 여부를 누르면 다음에 던질 루어를 바로 바꿔드려요.</p>
+      ${startBtn}
+    </section>`;
+  }
+
+  function lureChoices(cat, step) {
+    const all = data.lures.filter((l) => l.category === cat)
+      .sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+    if (!activeLure[cat] || !all.some((l) => l.id === activeLure[cat])) {
+      activeLure[cat] = step.combo.lures[0] ? step.combo.lures[0].lure.id : (all[0] && all[0].id);
+    }
+    return all;
+  }
+
+  function renderLive(steps, field) {
+    const round = session.round || 0;
+    const cur = E.currentStep(steps, session);
+    const catches = session.events.filter((e) => e.type === 'catch').length;
+    const bites = session.events.filter((e) => e.type === 'bite').length;
+    const lastAt = session.events.length ? session.events[session.events.length - 1].t : session.startedAt;
+    let html = `<section class="card live">
+      <div class="live-head"><span class="dot" aria-hidden="true"></span><b>현장 모드</b>
+        <span class="muted small">${esc(field.name)} · ${hhmm(session.startedAt)} 시작${round ? ` · ${round + 1}번째 포인트` : ''}</span>
+        <span class="tally">🎣 ${catches} · 👀 ${bites}</span></div>`;
+
+    if (cur.exhausted) {
+      html += `<div class="now"><h3>세 단계 모두 반응이 없었어요</h3>
+        <p class="small">이 포인트는 배스가 없거나 꺼져 있을 가능성이 커요. 포인트를 옮겨서 로테이션을 다시 돌려보세요.</p>
+        <button class="btn primary big" data-action="next-round">📍 다음 포인트로 이동</button></div>`;
+    } else {
+      const step = steps[cur.index];
+      const cb = step.combo;
+      const lures = lureChoices(cb.category, step);
+      const sp = stepSpot(step, round);
+      const s = cb.setup;
+      const since = minutesSince(lastAt);
+      const holdTip = cur.hold
+        ? (cur.last.type === 'catch'
+          ? '🎣 잡았어요! 같은 패턴 반복 — 비슷한 구조물·수심을 이어서 공략하세요.'
+          : '👀 입질 확인! 같은 코스·수심으로 몇 번 더. 그래도 안 물면 사이즈·컬러를 한 단계 다운.')
+        : esc(step.tip);
+      const memo = (data.lures.find((l) => l.id === activeLure[cb.category]) || {}).memo;
+      html += `<div class="now">
+        <div class="now-label">${cur.hold ? '패턴 유지' : `지금 던질 것 · ${CIRCLED[cur.index]} ${esc(step.label)}`}</div>
+        <h3>${esc(cb.categoryLabel)}</h3>
+        <div class="chips lure-pick">${lures.map((l) => `<button type="button" class="chip pick" data-action="pick-lure" data-cat="${esc(cb.category)}" data-lure="${esc(l.id)}" aria-pressed="${l.id === activeLure[cb.category]}">${l.favorite ? '★ ' : ''}${esc(l.name)}</button>`).join('')}</div>
+        <dl class="kv">
+          <dt>태클</dt><dd>${s ? `<b>${esc(s.name)}</b> <span class="small muted">${esc(s.rod || '')}</span>` : '<span class="warn">담당 태클 없음</span>'}</dd>
+          <dt>포인트</dt><dd>${sp ? `<b>${esc(sp.name)}</b>` : `<span class="small muted">${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`}</dd>
+          <dt>액션</dt><dd>${esc(cb.action)}${memo ? `<br><span class="small">📝 ${esc(memo)}</span>` : ''}</dd>
+        </dl>
+        <p class="hold-tip">${holdTip}</p>
+        <p class="timer small${since >= step.minutes ? ' over' : ''}" id="liveTimer" data-since="${lastAt}" data-minutes="${step.minutes}">${timerText(lastAt, step.minutes)}</p>
+        <div class="event-btns">
+          <button class="btn ev nobite" data-action="event" data-type="nobite" data-cat="${esc(cb.category)}">🙅<span>입질 없음</span><small>다음 루어로</small></button>
+          <button class="btn ev bite" data-action="event" data-type="bite" data-cat="${esc(cb.category)}">👀<span>입질</span><small>패턴 유지</small></button>
+          <button class="btn ev catch" data-action="event" data-type="catch" data-cat="${esc(cb.category)}">🎣<span>잡았다!</span><small>조과 기록</small></button>
+        </div>
+      </div>`;
+    }
+
+    html += `<details class="plan"><summary class="small">로테이션 전체 보기</summary><ol class="rot">${steps.map((st, i) => {
+      const mark = i === cur.index ? '▶' : (cur.tried && cur.tried.has(st.combo.category)) ? '✓' : '';
+      return `<li class="${mark === '✓' ? 'done' : ''}">${mark ? `<span class="mark">${mark}</span> ` : ''}${stepLine(st, i, round)}</li>`;
+    }).join('')}</ol></details>`;
+
+    if (session.events.length) {
+      html += `<ul class="timeline small">${session.events.slice(-6).reverse().map((e) => {
+        const lure = data.lures.find((l) => l.id === e.lureId);
+        return `<li><span class="muted">${hhmm(e.t)}</span> ${EVENT_LABEL[e.type]} · ${esc(lure ? lure.name : catLabel(e.cat))}</li>`;
+      }).join('')}</ul>`;
+    }
+    html += `<div class="btn-row live-foot">
+      ${session.events.length ? '<button class="btn ghost sm" data-action="undo-event">↩ 마지막 기록 취소</button>' : ''}
+      <button class="btn danger sm" data-action="end-session">🏁 출조 종료</button>
+    </div></section>`;
+    return html;
+  }
+
+  function timerText(since, minutes) {
+    const m = minutesSince(since);
+    return m >= minutes
+      ? `⏱ 마지막 기록 후 ${m}분 — 권장 ${minutes}분 지남, 반응 없으면 '입질 없음'으로 넘기세요`
+      : `⏱ 마지막 기록 후 ${m}분 / 권장 ${minutes}분`;
+  }
+
+  setInterval(() => {
+    const el = document.getElementById('liveTimer');
+    if (!el) return;
+    const since = Number(el.dataset.since);
+    const minutes = Number(el.dataset.minutes);
+    el.textContent = timerText(since, minutes);
+    el.classList.toggle('over', minutesSince(since) >= minutes);
+  }, 30000);
+
+  function endSession() {
+    if (session.events.length) {
+      const field = data.fields.find((f) => f.id === session.fieldId);
+      log.unshift({
+        id: session.id,
+        fieldId: session.fieldId,
+        fieldName: field ? field.name : '',
+        date: session.date,
+        startedAt: session.startedAt,
+        endedAt: Date.now(),
+        events: session.events,
+        catches: session.events.filter((e) => e.type === 'catch').map((e) => {
+          const l = data.lures.find((x) => x.id === e.lureId);
+          return { cat: e.cat, lureId: e.lureId, lureName: l ? l.name : '', t: e.t };
+        }),
+      });
+      saveLog();
+    }
+    session = null;
+    saveSession();
   }
 
   function renderCombo(cb, i, rank) {
@@ -314,9 +471,34 @@
     return `<div class="actions"><button class="icon-btn" data-action="edit" data-kind="${kind}" data-id="${esc(id)}" aria-label="수정">✏️</button><button class="icon-btn" data-action="delete" data-kind="${kind}" data-id="${esc(id)}" aria-label="삭제">🗑️</button></div>`;
   }
 
-  // ---------- 백업 ----------
+  // ---------- 기록 & 백업 ----------
+  function renderLog() {
+    let html = '<div class="section-title"><h2>출조 기록</h2></div>';
+    if (!log.length) {
+      return html + '<div class="card empty small">아직 기록이 없어요. 오늘 탭에서 <b>현장 모드</b>를 시작하고 입질·조과를 눌러보세요.<br>쌓인 조과는 같은 필드·같은 계절 추천에 반영됩니다.</div>';
+    }
+    const total = log.reduce((a, s) => a + s.catches.length, 0);
+    const byLure = {};
+    log.forEach((s) => s.catches.forEach((c) => { const k = c.lureName || catLabel(c.cat); byLure[k] = (byLure[k] || 0) + 1; }));
+    const best = Object.keys(byLure).sort((a, b) => byLure[b] - byLure[a]).slice(0, 3);
+    html += `<div class="card small">총 ${log.length}회 출조 · 🎣 ${total}마리${best.length ? `<br>베스트 루어: ${best.map((k) => `<b>${esc(k)}</b> ${byLure[k]}마리`).join(', ')}` : ''}</div>`;
+    log.forEach((s) => {
+      const mins = Math.round((s.endedAt - s.startedAt) / 60000);
+      const dur = mins >= 60 ? `${Math.floor(mins / 60)}시간 ${mins % 60}분` : `${mins}분`;
+      const counts = {};
+      s.catches.forEach((c) => { const k = c.lureName || catLabel(c.cat); counts[k] = (counts[k] || 0) + 1; });
+      const bites = (s.events || []).filter((e) => e.type === 'bite').length;
+      html += `<div class="card item"><div class="body">
+        <h3>${esc(s.date)} · ${esc(s.fieldName)} <span class="badge">🎣 ${s.catches.length}</span></h3>
+        <p>${hhmm(s.startedAt)}~${hhmm(s.endedAt)} (${dur}) · 입질 ${bites}회</p>
+        ${Object.keys(counts).length ? `<div class="chips" style="margin-top:6px">${Object.keys(counts).map((k) => `<span class="chip">${esc(k)} ×${counts[k]}</span>`).join('')}</div>` : ''}
+      </div><div class="actions"><button class="icon-btn" data-action="delete-log" data-id="${esc(s.id)}" aria-label="기록 삭제">🗑️</button></div></div>`;
+    });
+    return html;
+  }
+
   function renderBackup() {
-    return `<div class="section-title"><h2>데이터 백업</h2></div>
+    return renderLog() + `<div class="section-title"><h2>데이터 백업</h2></div>
       <div class="card">
         <p class="small">데이터는 이 브라우저(기기)에만 저장돼요. 기기를 바꾸거나 다른 폰에서 쓰려면 내보내기 → 가져오기를 하세요.</p>
         <div class="btn-row">
@@ -337,6 +519,8 @@
       try {
         const obj = JSON.parse(reader.result);
         if (!Array.isArray(obj.setups) || !Array.isArray(obj.lures) || !Array.isArray(obj.fields)) throw new Error('형식이 맞지 않아요');
+        if (Array.isArray(obj.log)) { log = obj.log; saveLog(); }
+        delete obj.log;
         data = obj; save(); render();
         alert('가져오기 완료!');
       } catch (err) { alert('가져오기 실패: ' + err.message); }
@@ -353,7 +537,30 @@
     const b = e.target.closest('[data-action]');
     if (!b) return;
     const { action, kind, id } = b.dataset;
-    if (action === 'add') openEditor(kind, null);
+    if (action === 'start-session') {
+      session = { id: uid('t'), fieldId: ui.fieldId, date: dateStr(0), startedAt: Date.now(), round: 0, events: [] };
+      saveSession(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (action === 'event' && session) {
+      const cat = b.dataset.cat;
+      session.events.push({ t: Date.now(), type: b.dataset.type, cat, lureId: activeLure[cat] || null, round: session.round || 0 });
+      saveSession(); updateToday();
+      if (navigator.vibrate) navigator.vibrate(b.dataset.type === 'catch' ? [60, 40, 60] : 30);
+    } else if (action === 'undo-event' && session) {
+      session.events.pop(); saveSession(); updateToday();
+    } else if (action === 'next-round' && session) {
+      session.round = (session.round || 0) + 1; saveSession(); updateToday();
+    } else if (action === 'pick-lure') {
+      activeLure[b.dataset.cat] = b.dataset.lure;
+      if (session) { session.lures = Object.assign({}, activeLure); saveSession(); }
+      b.parentElement.querySelectorAll('.pick').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    } else if (action === 'end-session' && session) {
+      const n = session.events.filter((ev) => ev.type === 'catch').length;
+      if (confirm(session.events.length ? `출조를 종료하고 기록을 저장할까요? (🎣 ${n}마리)` : '기록 없이 현장 모드를 종료할까요?')) {
+        endSession(); render();
+      }
+    } else if (action === 'delete-log') {
+      if (confirm('이 출조 기록을 삭제할까요?')) { log = log.filter((s) => s.id !== id); saveLog(); render(); }
+    } else if (action === 'add') openEditor(kind, null);
     else if (action === 'edit') openEditor(kind, data[COLL[kind]].find((x) => x.id === id));
     else if (action === 'delete') {
       const item = data[COLL[kind]].find((x) => x.id === id);
@@ -362,7 +569,7 @@
         save(); render();
       }
     } else if (action === 'export') {
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(Object.assign({}, data, { log }), null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `tackle-combo-${dateStr(0)}.json`;
