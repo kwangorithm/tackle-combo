@@ -8,6 +8,7 @@
   const PACK_KEY = 'tackle-combo-pack-v1';
   const SESSION_KEY = 'tackle-combo-session-v1';
   const LOG_KEY = 'tackle-combo-log-v1';
+  const APIKEY_KEY = 'tackle-combo-apikey';
 
   // ---------- 저장소 ----------
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -413,7 +414,7 @@
 
   // ---------- 태클 ----------
   function renderSetups() {
-    let html = '<div class="section-title"><h2>내 태클 세팅</h2><button class="btn primary sm" data-action="add" data-kind="setup">+ 세팅 추가</button></div>';
+    let html = `<div class="section-title"><h2>내 태클 세팅</h2><div class="btn-row">${photoBtn('setup')}<button class="btn primary sm" data-action="add" data-kind="setup">+ 세팅 추가</button></div></div>`;
     html += '<p class="muted small">로드 + 릴 + 라인 조합 단위로 저장하고, 이 세팅으로 쓰는 루어 카테고리를 지정하세요.</p>';
     if (!data.setups.length) return html + '<div class="card empty">등록된 태클이 없어요.</div>';
     data.setups.forEach((s) => {
@@ -430,7 +431,7 @@
   // ---------- 루어 ----------
   function renderLures() {
     const cats = Object.keys(E.CATEGORIES);
-    let html = '<div class="section-title"><h2>내 루어</h2><button class="btn primary sm" data-action="add" data-kind="lure">+ 루어 추가</button></div>';
+    let html = `<div class="section-title"><h2>내 루어</h2><div class="btn-row">${photoBtn('lure')}<button class="btn primary sm" data-action="add" data-kind="lure">+ 루어 추가</button></div></div>`;
     html += `<select class="filter" id="lureFilter"><option value="">전체 카테고리 (${data.lures.length})</option>${cats.map((c) => {
       const n = data.lures.filter((l) => l.category === c).length;
       return `<option value="${c}"${ui.lureFilter === c ? ' selected' : ''}>${esc(E.CATEGORIES[c].label)} (${n})</option>`;
@@ -498,7 +499,7 @@
   }
 
   function renderBackup() {
-    return renderLog() + `<div class="section-title"><h2>데이터 백업</h2></div>
+    return renderLog() + renderApiKey() + `<div class="section-title"><h2>데이터 백업</h2></div>
       <div class="card">
         <p class="small">데이터는 이 브라우저(기기)에만 저장돼요. 기기를 바꾸거나 다른 폰에서 쓰려면 내보내기 → 가져오기를 하세요.</p>
         <div class="btn-row">
@@ -560,7 +561,19 @@
       }
     } else if (action === 'delete-log') {
       if (confirm('이 출조 기록을 삭제할까요?')) { log = log.filter((s) => s.id !== id); saveLog(); render(); }
-    } else if (action === 'add') openEditor(kind, null);
+    } else if (action === 'save-key') {
+      const v = $('#apiKeyInput').value.trim();
+      if (!/^sk-ant-/.test(v)) { alert('sk-ant- 로 시작하는 키를 넣어주세요.'); return; }
+      try { localStorage.setItem(APIKEY_KEY, v); } catch (err) { alert('이 브라우저에서는 키를 저장할 수 없어요.'); }
+      render();
+    } else if (action === 'del-key') {
+      if (confirm('API 키를 이 기기에서 삭제할까요?')) { try { localStorage.removeItem(APIKEY_KEY); } catch (err) { /* noop */ } render(); }
+    } else if (action === 'close-review') $('#review').close();
+    else if (action === 'goto-key') {
+      $('#review').close(); ui.tab = 'backup'; saveUi(); render();
+      setTimeout(() => { const el = $('#apiKeyInput'); if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); } }, 50);
+    } else if (action === 'add-reviewed') addReviewed(kind);
+    else if (action === 'add') openEditor(kind, null);
     else if (action === 'edit') openEditor(kind, data[COLL[kind]].find((x) => x.id === id));
     else if (action === 'delete') {
       const item = data[COLL[kind]].find((x) => x.id === id);
@@ -589,6 +602,110 @@
         () => alert('위치를 가져오지 못했어요.'),
       );
     }
+  });
+
+  // ---------- 사진 인식 ----------
+  const V = window.TackleVision;
+  const getKey = () => { try { return localStorage.getItem(APIKEY_KEY) || ''; } catch (e) { return ''; } };
+
+  function photoBtn(kind) {
+    return `<label class="btn ghost sm photo-btn">📷 사진으로 추가<input type="file" accept="image/*" multiple hidden data-photo="${kind}"></label>`;
+  }
+
+  function renderApiKey() {
+    const key = getKey();
+    return `<div class="section-title"><h2>📷 사진 인식 설정</h2></div>
+      <div class="card small">
+        <p style="margin-top:0">태클·루어 탭의 "📷 사진으로 추가"는 Claude AI가 사진 속 장비를 알아봐서 자동으로 채워줍니다.
+        본인의 Anthropic API 키가 필요하고, 사진 1장에 대략 30~60원 정도 듭니다.</p>
+        ${key
+          ? `<p>✅ 등록됨 <code>${esc(key.slice(0, 10))}…${esc(key.slice(-4))}</code></p>
+             <button class="btn ghost sm" data-action="del-key">키 삭제</button>`
+          : `<div class="btn-row"><input type="password" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off" style="flex:1;min-width:180px">
+             <button class="btn primary sm" data-action="save-key">저장</button></div>
+             <p class="muted">키 발급: console.anthropic.com → API Keys. 키는 이 기기에만 저장되고 Anthropic 서버 외에는 어디에도 전송되지 않아요.</p>`}
+      </div>`;
+  }
+
+  const CONF_LABEL = { high: '', medium: '', low: '<span class="warn">⚠ 확인 필요</span>' };
+  let reviewItems = [];
+
+  function openReview(title, body, actions) {
+    $('#reviewTitle').textContent = title;
+    $('#reviewBody').innerHTML = body;
+    $('#reviewActions').innerHTML = actions;
+    if (!$('#review').open) $('#review').showModal();
+  }
+
+  function isDuplicate(kind, item) {
+    // 괄호 속 영문 표기·공백·따옴표 차이는 무시하고, 한쪽 이름이 다른 쪽을 포함하면 같은 장비로 본다
+    const norm = (s) => String(s || '').replace(/\(.*?\)/g, '').replace(/[\s"'”″]/g, '').toLowerCase();
+    const same = (a, b) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a));
+    if (kind === 'lure') return data.lures.some((x) => same(norm(x.name), norm(item.name)));
+    return data.setups.some((x) => same(norm(x.rod), norm(item.rod)) && same(norm(x.reel), norm(item.reel)));
+  }
+
+  async function handlePhotos(kind, files) {
+    if (!getKey()) {
+      openReview('API 키가 필요해요', '<p class="small">사진 인식을 쓰려면 먼저 <b>기록</b> 탭에서 Claude API 키를 등록하세요.</p>',
+        '<button type="button" class="btn ghost" data-action="close-review">닫기</button><button type="button" class="btn primary" data-action="goto-key">키 등록하러 가기</button>');
+      return;
+    }
+    openReview('사진 분석 중…', `<div class="loading">🔍 ${files.length}장의 사진에서 ${kind === 'lure' ? '루어' : '태클'}를 찾고 있어요.<br><span class="small">보통 10~30초 걸려요.</span></div>`, '');
+    try {
+      const res = await V.recognize(files, kind, getKey(), E.CATEGORIES);
+      const items = kind === 'lure' ? res.lures : res.setups;
+      reviewItems = items.map((it) => ({ item: it, dup: isDuplicate(kind, it) }));
+      if (!items.length) {
+        openReview('찾은 장비가 없어요', `<p class="small">${esc(res.note || '사진에서 장비를 알아보지 못했어요.')}</p><p class="small muted">장비가 크게, 글자가 잘 보이게 찍으면 정확해져요.</p>`,
+          '<button type="button" class="btn primary" data-action="close-review">닫기</button>');
+        return;
+      }
+      const rows = reviewItems.map((r, i) => {
+        const it = r.item;
+        const sub = kind === 'lure'
+          ? [it.brand, catLabel(it.category), it.size].filter(Boolean).join(' · ') + (it.colors.length ? `<br>🎨 ${it.colors.map(esc).join(', ')}` : '')
+          : [it.rod, it.reel, it.line].filter(Boolean).map(esc).join(' + ') + `<br>${esc(TYPE_LABEL[it.type] || '')} ${esc(it.power)} · ${it.categories.map(catLabel).join(', ')}`;
+        return `<div class="review-row">
+          <label class="check"><input type="checkbox" data-review="${i}"${r.dup ? '' : ' checked'}></label>
+          <div class="body"><input type="text" data-review-name="${i}" value="${esc(it.name)}">
+          <div class="small muted">${sub}</div>
+          <div class="small">${CONF_LABEL[it.confidence] || ''}${r.dup ? ' <span class="badge">이미 있음</span>' : ''}</div></div></div>`;
+      }).join('');
+      openReview(`${items.length}개를 찾았어요`,
+        `${res.note ? `<p class="small muted">💬 ${esc(res.note)}</p>` : ''}<div class="review-list">${rows}</div>
+         <p class="small muted">이름은 여기서 바로 고칠 수 있고, 나머지는 추가한 뒤 ✏️로 수정하세요.</p>`,
+        `<button type="button" class="btn ghost" data-action="close-review">취소</button><button type="button" class="btn primary" data-action="add-reviewed" data-kind="${kind}">선택 항목 추가</button>`);
+    } catch (err) {
+      openReview('인식 실패', `<p class="small warn">${esc(err.message)}</p>`, '<button type="button" class="btn primary" data-action="close-review">닫기</button>');
+    }
+  }
+
+  function addReviewed(kind) {
+    let n = 0;
+    reviewItems.forEach((r, i) => {
+      if (!document.querySelector(`[data-review="${i}"]`).checked) return;
+      const it = r.item;
+      const name = document.querySelector(`[data-review-name="${i}"]`).value.trim() || it.name;
+      if (kind === 'lure') {
+        data.lures.push({ id: uid('l'), name, brand: it.brand, category: it.category, size: it.size, colors: it.colors, favorite: false, memo: it.memo });
+      } else {
+        data.setups.push({ id: uid('s'), name, rod: it.rod, reel: it.reel, line: it.line, type: it.type, power: it.power, categories: it.categories, favorite: false, memo: '' });
+      }
+      n++;
+    });
+    save();
+    $('#review').close();
+    render();
+    if (n) alert(`${n}개를 추가했어요! 오늘 추천에 바로 반영됩니다.`);
+  }
+
+  document.addEventListener('change', (e) => {
+    const input = e.target.closest('input[data-photo]');
+    if (!input || !input.files.length) return;
+    const files = Array.from(input.files).slice(0, 5);
+    input.value = '';
+    handlePhotos(input.dataset.photo, files);
   });
 
   // ---------- 편집기 ----------
