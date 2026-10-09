@@ -190,7 +190,7 @@ test('예전 형식 기록(조건·포인트 없음)도 깨지지 않는다', ()
 });
 
 // ---------- 캘린더 ----------
-test('구글 캘린더 링크와 .ics 파일을 만든다', () => {
+test('구글 캘린더 새 일정 링크를 만든다', () => {
   const start = Date.UTC(2026, 9, 9, 21, 0); // 한국 10/10 06:00
   const entry = { id: 'tA', fieldName: '이동저수지', date: '2026-10-10', startedAt: start, endedAt: start + 137 * 60000, memo: '메모, 세미콜론; 백슬래시\\',
     events: [{ t: start + 20 * 60000, type: 'catch', cat: 'moving', lureId: 'l5', round: 0, spot: '수문' }] };
@@ -207,14 +207,6 @@ test('구글 캘린더 링크와 .ics 파일을 만든다', () => {
   assert.strictEqual(url.searchParams.get('details'), ev.details);
   assert.strictEqual(url.searchParams.get('location'), '이동저수지 (용인)');
 
-  const ics = E.icsFile(ev, entry.id, Date.UTC(2026, 9, 10, 0, 0));
-  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n'));
-  assert.ok(ics.includes('DTSTART:20261009T210000Z\r\n'));
-  assert.ok(ics.includes('UID:tA@tackle-combo'));
-  ics.split('\r\n').forEach((l) => assert.ok(Buffer.byteLength(l, 'utf8') <= 75, l));
-  const unfolded = ics.replace(/\r\n /g, '');
-  assert.ok(unfolded.includes('메모\\, 세미콜론\\; 백슬래시\\\\'));
-  assert.ok(unfolded.includes('\\n[로테이션]\\n'));
 });
 
 test('너무 짧은 출조도 캘린더에는 최소 30분으로', () => {

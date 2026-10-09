@@ -617,7 +617,6 @@
         ${steps ? `<details class="trip-steps"${ui.openLog === s.id ? ' open' : ''}><summary class="small">🔁 로테이션 보기 (${st.segs.length}단계)</summary><ol>${steps}</ol></details>` : ''}
         <div class="btn-row trip-actions">
           <a class="btn primary sm" href="${esc(E.googleCalendarUrl(tripEventOf(s)))}" target="_blank" rel="noopener">📅 구글 캘린더</a>
-          <button class="btn primary sm" data-action="ics-log" data-id="${esc(s.id)}">📅 아이폰·삼성 캘린더</button>
           <button class="btn ghost sm" data-action="copy-log" data-id="${esc(s.id)}">📋 복사</button>
           <button class="btn ghost sm" data-action="memo-log" data-id="${esc(s.id)}">📝 메모</button>
           <button class="icon-btn" data-action="delete-log" data-id="${esc(s.id)}" aria-label="기록 삭제">🗑️</button>
@@ -755,18 +754,6 @@
         if (ok) { b.textContent = '✅ 복사됨'; setTimeout(() => { b.textContent = '📋 복사'; }, 2500); }
         else prompt('아래 내용을 길게 눌러 복사하세요', text);
       });
-    } else if (action === 'ics-log') {
-      const entry = log.find((x) => x.id === id);
-      if (!entry) return;
-      const ics = E.icsFile(tripEventOf(entry), entry.id);
-      const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `fishing-${entry.date}.ics`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     } else if (action === 'memo-log') {
       const entry = log.find((x) => x.id === id);
       if (!entry) return;
