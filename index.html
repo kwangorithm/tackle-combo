@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>오늘의 태클 조합</title>
+  <meta name="description" content="내 태클·루어와 오늘 날씨로 자주 가는 필드의 공략 조합을 추천합니다.">
+  <meta name="theme-color" content="#0f3b3a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🎣</span>
+      <div>
+        <h1>오늘의 태클 조합</h1>
+        <p class="sub" id="todayLabel"></p>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="today" aria-selected="true">오늘</button>
+    <button role="tab" data-tab="setups">태클</button>
+    <button role="tab" data-tab="lures">루어</button>
+    <button role="tab" data-tab="fields">필드</button>
+    <button role="tab" data-tab="backup">백업</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <dialog id="editor">
+    <form method="dialog" id="editorForm">
+      <h2 id="editorTitle"></h2>
+      <div id="editorBody"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" data-action="close-editor">취소</button>
+        <button type="submit" class="btn primary" value="save">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="engine.js"></script>
+  <script src="seed.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

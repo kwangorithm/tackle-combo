@@ -1,0 +1,13 @@
+{
+  "name": "오늘의 태클 조합",
+  "short_name": "태클조합",
+  "description": "내 태클·루어와 오늘 날씨로 필드 공략 조합을 추천",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f3b3a",
+  "theme_color": "#0f3b3a",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
