@@ -1,5 +1,5 @@
 // 오프라인용 앱 셸 캐시 (날씨 API는 항상 네트워크)
-const CACHE = 'tackle-combo-v7';
+const CACHE = 'tackle-combo-v8';
 const SHELL = ['./', './index.html', './style.css', './engine.js', './photos.js', './seed.js', './app.js', './icon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

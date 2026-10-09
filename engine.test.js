@@ -188,3 +188,36 @@ test('예전 형식 기록(조건·포인트 없음)도 깨지지 않는다', ()
   assert.ok(text.includes('미노우'));
   assert.ok(!text.includes('[조건]'));
 });
+
+// ---------- 캘린더 ----------
+test('구글 캘린더 링크와 .ics 파일을 만든다', () => {
+  const start = Date.UTC(2026, 9, 9, 21, 0); // 한국 10/10 06:00
+  const entry = { id: 'tA', fieldName: '이동저수지', date: '2026-10-10', startedAt: start, endedAt: start + 137 * 60000, memo: '메모, 세미콜론; 백슬래시\\',
+    events: [{ t: start + 20 * 60000, type: 'catch', cat: 'moving', lureId: 'l5', round: 0, spot: '수문' }] };
+  const ev = E.tripEvent(entry, () => '하이피처', '이동저수지 (용인)');
+  assert.ok(ev.title.startsWith('🎣 이동저수지 배스 낚시'));
+  assert.ok(!ev.details.includes(ev.title));
+  assert.ok(ev.details.includes('[로테이션]'));
+
+  const url = new URL(E.googleCalendarUrl(ev));
+  assert.strictEqual(url.hostname, 'calendar.google.com');
+  assert.strictEqual(url.searchParams.get('action'), 'TEMPLATE');
+  assert.strictEqual(url.searchParams.get('dates'), '20261009T210000Z/20261009T231700Z');
+  assert.strictEqual(url.searchParams.get('text'), ev.title);
+  assert.strictEqual(url.searchParams.get('details'), ev.details);
+  assert.strictEqual(url.searchParams.get('location'), '이동저수지 (용인)');
+
+  const ics = E.icsFile(ev, entry.id, Date.UTC(2026, 9, 10, 0, 0));
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n'));
+  assert.ok(ics.includes('DTSTART:20261009T210000Z\r\n'));
+  assert.ok(ics.includes('UID:tA@tackle-combo'));
+  ics.split('\r\n').forEach((l) => assert.ok(Buffer.byteLength(l, 'utf8') <= 75, l));
+  const unfolded = ics.replace(/\r\n /g, '');
+  assert.ok(unfolded.includes('메모\\, 세미콜론\\; 백슬래시\\\\'));
+  assert.ok(unfolded.includes('\\n[로테이션]\\n'));
+});
+
+test('너무 짧은 출조도 캘린더에는 최소 30분으로', () => {
+  const ev = E.tripEvent({ fieldName: 'A', date: '2026-10-10', startedAt: 0, endedAt: 5 * 60000, events: [] }, () => null);
+  assert.strictEqual(ev.end - ev.start, 30 * 60000);
+});

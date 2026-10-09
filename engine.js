@@ -569,9 +569,74 @@
     return lines.join('\n');
   }
 
+  // ---------- 캘린더 (API 없이: 구글 캘린더 링크 / .ics 파일) ----------
+  // 시각은 모두 UTC(…Z)로 써서 기기·캘린더 시간대 설정과 무관하게 맞게 들어가게 한다
+  function utcStamp(t) {
+    const d = new Date(t);
+    return `${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
+  }
+
+  /** 기록 → 캘린더 일정 { title, details, start, end, location } */
+  function tripEvent(entry, lureName, location) {
+    const lines = tripReport(entry, lureName).split('\n');
+    const end = Math.max(entry.endedAt || entry.startedAt, entry.startedAt + 30 * 60000); // 너무 짧으면 30분으로
+    return {
+      title: lines[0],
+      details: lines.slice(2).join('\n').trim(), // 제목·시간 줄은 일정 자체에 들어가므로 뺀다
+      start: entry.startedAt,
+      end,
+      location: location || entry.fieldName || '',
+    };
+  }
+
+  function googleCalendarUrl(ev) {
+    const q = [
+      ['action', 'TEMPLATE'],
+      ['text', ev.title],
+      ['dates', `${utcStamp(ev.start)}/${utcStamp(ev.end)}`],
+      ['details', ev.details],
+      ['location', ev.location],
+    ].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    return `https://calendar.google.com/calendar/render?${q}`;
+  }
+
+  // RFC 5545: 특수문자 이스케이프 + 한 줄 75바이트(UTF-8) 접기
+  function icsEscape(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  }
+  function icsFold(line) {
+    const out = [];
+    let cur = '';
+    let bytes = 0;
+    for (const ch of line) {
+      const b = unescape(encodeURIComponent(ch)).length;
+      if (bytes + b > (out.length ? 74 : 75)) { out.push(cur); cur = ''; bytes = 0; }
+      cur += ch;
+      bytes += b;
+    }
+    out.push(cur);
+    return out.join('\r\n ');
+  }
+
+  function icsFile(ev, uid, now) {
+    return [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tackle-combo//KO', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${uid}@tackle-combo`,
+      `DTSTAMP:${utcStamp(now || Date.now())}`,
+      `DTSTART:${utcStamp(ev.start)}`,
+      `DTEND:${utcStamp(ev.end)}`,
+      `SUMMARY:${icsEscape(ev.title)}`,
+      `DESCRIPTION:${icsEscape(ev.details)}`,
+      `LOCATION:${icsEscape(ev.location)}`,
+      'END:VEVENT', 'END:VCALENDAR',
+    ].map(icsFold).join('\r\n') + '\r\n';
+  }
+
   const api = {
     STRUCTURES, CATEGORIES, LABELS, SLOT_HOUR, ROLES, STEPS, EVENT_SCORE,
     tripSegments, tripStats, tripReport, condLine, durLabel,
+    tripEvent, googleCalendarUrl, icsFile, utcStamp,
     seasonOf, windClass, skyClass, shiftClarity,
     deriveConditions, scoreCategory, bestSpots, pickSetup,
     colorAdvice, recommend,
