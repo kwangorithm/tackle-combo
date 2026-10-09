@@ -261,5 +261,19 @@ dialog h2 { font-size: 18px; }
 #viewer form { padding: 12px; }
 #viewerImg { width: 100%; max-height: calc(100dvh - 120px); object-fit: contain; border-radius: 12px; background: #000; }
 
+/* trip log */
+.trip p { margin: 6px 0 0; }
+.trip .chips { margin-top: 8px; }
+.trip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.trip-head h3 { font-size: 16px; }
+.trip-catch { font-weight: 800; color: var(--accent); white-space: nowrap; }
+.trip-catch.zero { color: var(--muted); }
+.trip-steps { margin-top: 10px; }
+.trip-steps summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.trip-steps ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.trip-steps .trip-move { list-style: none; margin-left: -20px; color: var(--accent); font-weight: 700; font-size: 13px; }
+.trip-actions { margin-top: 12px; align-items: center; }
+.trip-actions .icon-btn { margin-left: auto; }
+
 .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
 .loading { text-align: center; padding: 24px; color: var(--muted); }

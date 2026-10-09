@@ -481,8 +481,97 @@
     return out;
   }
 
+  // ---------- 출조 기록 정리 ----------
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const hm = (t) => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+  function durLabel(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    return m >= 60 ? `${Math.floor(m / 60)}시간${m % 60 ? ` ${m % 60}분` : ''}` : `${m}분`;
+  }
+  const EVENT_ICON = { nobite: '🙅', bite: '👀', catch: '🎣' };
+
+  /** 출조 기록의 이벤트 → 루어별 구간(무엇을, 어디서, 언제부터 얼마나, 결과) */
+  function tripSegments(entry) {
+    const segs = [];
+    const roundStarts = entry.roundStarts || {};
+    let prevT = entry.startedAt;
+    let prevRound = 0;
+    (entry.events || []).forEach((e) => {
+      const round = e.round || 0;
+      const key = `${round}|${e.cat}|${e.lureId || ''}`;
+      let seg = segs[segs.length - 1];
+      if (!seg || seg.key !== key) {
+        const start = round !== prevRound && roundStarts[round] ? roundStarts[round] : prevT;
+        seg = { key, round, cat: e.cat, lureId: e.lureId || null, spot: e.spot || '', start, end: e.t, events: [] };
+        segs.push(seg);
+      }
+      seg.events.push(e.type);
+      seg.end = e.t;
+      if (!seg.spot && e.spot) seg.spot = e.spot;
+      prevT = e.t;
+      prevRound = round;
+    });
+    return segs;
+  }
+
+  function tripStats(entry) {
+    const evs = entry.events || [];
+    const segs = tripSegments(entry);
+    const rounds = Math.max(entry.rounds || 1, ...evs.map((e) => (e.round || 0) + 1), 1);
+    return {
+      segs,
+      catches: evs.filter((e) => e.type === 'catch').length,
+      bites: evs.filter((e) => e.type === 'bite').length,
+      switches: Math.max(0, segs.length - 1),
+      rounds,
+      duration: (entry.endedAt || entry.startedAt) - entry.startedAt,
+    };
+  }
+
+  function condLine(cond) {
+    if (!cond) return '';
+    const parts = [LABELS.season[cond.season], `수온 ${cond.waterTemp}°C${cond.waterTempEstimated ? '(추정)' : ''}`];
+    if (cond.airTemp != null) parts.push(`기온 ${Math.round(cond.airTemp)}°C`);
+    parts.push(LABELS.sky[cond.sky]);
+    parts.push(cond.windMs != null ? `바람 ${Number(cond.windMs).toFixed(1)}m/s` : LABELS.wind[cond.wind]);
+    parts.push(LABELS.pressure[cond.pressure], `물색 ${LABELS.clarity[cond.clarity]}`);
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  /** 캘린더 등에 붙여넣을 텍스트. lureName(id) → 이름 */
+  function tripReport(entry, lureName) {
+    const st = tripStats(entry);
+    const d = new Date(`${entry.date}T00:00:00`);
+    const wd = '일월화수목금토'[d.getDay()];
+    const name = (seg) => (seg.lureId && lureName(seg.lureId)) || (CATEGORIES[seg.cat] ? CATEGORIES[seg.cat].short : seg.cat);
+    const lines = [];
+    lines.push(`🎣 ${entry.fieldName || '출조'} 배스 낚시 — ${st.catches ? `${st.catches}마리` : '꽝'}`);
+    lines.push(`${entry.date} (${wd}) ${hm(entry.startedAt)}~${hm(entry.endedAt || entry.startedAt)} (${durLabel(st.duration)})`);
+    lines.push('');
+    if (entry.cond) lines.push(`[조건] ${condLine(entry.cond)}`);
+    lines.push(`[결과] 🎣 ${st.catches}마리 · 👀 입질 ${st.bites}회 · 루어 교체 ${st.switches}회 · 포인트 ${st.rounds}곳`);
+    const byLure = {};
+    st.segs.forEach((s) => s.events.forEach((t) => { if (t === 'catch') byLure[name(s)] = (byLure[name(s)] || 0) + 1; }));
+    const best = Object.keys(byLure).sort((a, b) => byLure[b] - byLure[a]);
+    if (best.length) lines.push(`[히트 루어] ${best.map((k) => `${k} ${byLure[k]}마리`).join(', ')}`);
+    if (entry.memo) lines.push(`[메모] ${entry.memo}`);
+    if (st.segs.length) {
+      lines.push('');
+      lines.push('[로테이션]');
+      let round = 0;
+      st.segs.forEach((s, i) => {
+        if (s.round !== round) { round = s.round; lines.push(`📍 포인트 이동 (${round + 1}번째)`); }
+        const cat = CATEGORIES[s.cat] ? CATEGORIES[s.cat].short : s.cat;
+        const label = s.lureId && lureName(s.lureId) ? `${lureName(s.lureId)} (${cat})` : cat;
+        lines.push(`${i + 1}. ${hm(s.start)} ${label}${s.spot ? ` @ ${s.spot}` : ''} — ${durLabel(s.end - s.start)} ${s.events.map((t) => EVENT_ICON[t]).join('')}`);
+      });
+    }
+    return lines.join('\n');
+  }
+
   const api = {
     STRUCTURES, CATEGORIES, LABELS, SLOT_HOUR, ROLES, STEPS, EVENT_SCORE,
+    tripSegments, tripStats, tripReport, condLine, durLabel,
     seasonOf, windClass, skyClass, shiftClarity,
     deriveConditions, scoreCategory, bestSpots, pickSetup,
     colorAdvice, recommend,

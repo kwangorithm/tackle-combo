@@ -146,3 +146,45 @@ test('같은 필드·같은 계절 조과는 추천 점수에 반영된다 (최�
   assert.strictEqual(withB.score, base.score + 3);
   assert.strictEqual(withB.factors[0].label, '내 조과 4마리');
 });
+
+// ---------- 출조 기록 정리 ----------
+test('출조 기록을 루어별 구간으로 나누고 캘린더용 텍스트를 만든다', () => {
+  const T = (h, m) => new Date(2026, 9, 9, h, m).getTime();
+  const entry = {
+    fieldName: '이동저수지', date: '2026-10-09', startedAt: T(6, 0), endedAt: T(8, 30), rounds: 2,
+    roundStarts: { 1: T(7, 10) }, memo: '새물 유입구 대박',
+    cond: { season: 'fall', waterTemp: 18, waterTempEstimated: true, airTemp: 16.4, sky: 'cloudy', windMs: 4.2, wind: 'breeze', pressure: 'falling', clarity: 'stained' },
+    events: [
+      { t: T(6, 20), type: 'nobite', cat: 'moving', lureId: 'l5', round: 0, spot: '수문 브레이크' },
+      { t: T(6, 50), type: 'bite', cat: 'bottom', lureId: 'l2', round: 0, spot: '송전교 다리 밑' },
+      { t: T(7, 0), type: 'catch', cat: 'bottom', lureId: 'l2', round: 0, spot: '송전교 다리 밑' },
+      { t: T(7, 40), type: 'catch', cat: 'moving', lureId: 'l5', round: 1, spot: '새물유입구' },
+    ],
+  };
+  const st = E.tripStats(entry);
+  assert.strictEqual(st.segs.length, 3);
+  assert.deepStrictEqual(st.segs[1].events, ['bite', 'catch']);
+  assert.strictEqual(st.segs[2].start, T(7, 10)); // 포인트 이동 시각부터
+  assert.deepStrictEqual([st.catches, st.bites, st.switches, st.rounds], [2, 1, 2, 2]);
+
+  const names = { l5: '하이피처 3/8oz', l2: '센코 5"' };
+  const text = E.tripReport(entry, (id) => names[id]);
+  const lines = text.split('\n');
+  assert.strictEqual(lines[0], '🎣 이동저수지 배스 낚시 — 2마리');
+  assert.strictEqual(lines[1], '2026-10-09 (금) 06:00~08:30 (2시간 30분)');
+  assert.ok(text.includes('[조건] 가을 · 수온 18°C(추정) · 기온 16°C · 흐림 · 바람 4.2m/s · 기압 하강 · 물색 약간 탁함'));
+  assert.ok(text.includes('[결과] 🎣 2마리 · 👀 입질 1회 · 루어 교체 2회 · 포인트 2곳'));
+  assert.ok(text.includes('[히트 루어] 센코 5" 1마리, 하이피처 3/8oz 1마리'));
+  assert.ok(text.includes('[메모] 새물 유입구 대박'));
+  assert.ok(text.includes('1. 06:00 하이피처 3/8oz (무빙) @ 수문 브레이크 — 20분 🙅'));
+  assert.ok(text.includes('2. 06:20 센코 5" (바닥 웜) @ 송전교 다리 밑 — 40분 👀🎣'));
+  assert.ok(text.includes('📍 포인트 이동 (2번째)\n3. 07:10 하이피처 3/8oz (무빙) @ 새물유입구 — 30분 🎣'));
+});
+
+test('예전 형식 기록(조건·포인트 없음)도 깨지지 않는다', () => {
+  const entry = { fieldName: '고삼지', date: '2026-10-01', startedAt: 0, endedAt: 3600000, events: [{ t: 600000, type: 'nobite', cat: 'minnow', round: 0 }], catches: [] };
+  const text = E.tripReport(entry, () => null);
+  assert.ok(text.startsWith('🎣 고삼지 배스 낚시 — 꽝'));
+  assert.ok(text.includes('미노우'));
+  assert.ok(!text.includes('[조건]'));
+});

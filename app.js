@@ -157,6 +157,7 @@
   }
 
   let updateSeq = 0;
+  let lastCond = null; // 현장 모드 시작 시 기록에 남길 날씨·수온 조건
   async function updateToday() {
     const seq = ++updateSeq;
     const field = data.fields.find((f) => f.id === ui.fieldId);
@@ -167,6 +168,7 @@
     try { weather = await fetchWeather(field); } catch (e) { err = e; }
     if (seq !== updateSeq) return; // 더 최신 요청이 있음
     const cond = E.deriveConditions(weather, dateStr(ui.dayOffset), ui.slot, field, overrides);
+    lastCond = cond;
     const rec = E.recommend(data, cond, field.id, 3, { bonus: E.historyBonus(log, field.id, cond.season) });
     const steps = E.buildRotation(rec.combos.concat(rec.others), session);
     $('#todayResult').innerHTML = renderResult(cond, rec, field, err, steps);
@@ -284,6 +286,7 @@
       const activeName = (data.lures.find((l) => l.id === activeLure[cb.category]) || {}).name || cb.categoryLabel;
       session.timerMinutes = step.minutes + (session.timerExtra || 0);
       session.timerLabel = activeName;
+      session.currentSpot = sp ? sp.name : '';
       saveSession();
       const holdTip = cur.hold
         ? (cur.last.type === 'catch'
@@ -424,7 +427,8 @@
   }
   document.addEventListener('visibilitychange', () => { updateWakeLock(); tickTimer(); });
 
-  function endSession() {
+  function endSession(opts) {
+    opts = opts || {};
     if (session.events.length) {
       const field = data.fields.find((f) => f.id === session.fieldId);
       log.unshift({
@@ -433,13 +437,20 @@
         fieldName: field ? field.name : '',
         date: session.date,
         startedAt: session.startedAt,
-        endedAt: Date.now(),
+        endedAt: opts.endedAt || Date.now(),
         events: session.events,
+        cond: session.cond || null,
+        rounds: (session.round || 0) + 1,
+        roundStarts: session.roundStarts || {},
+        memo: opts.memo || '',
+        lureNames: Object.fromEntries(session.events.filter((e) => e.lureId).map((e) => [e.lureId, (data.lures.find((l) => l.id === e.lureId) || {}).name || ''])),
+        auto: !!opts.auto,
         catches: session.events.filter((e) => e.type === 'catch').map((e) => {
           const l = data.lures.find((x) => x.id === e.lureId);
           return { cat: e.cat, lureId: e.lureId, lureName: l ? l.name : '', t: e.t };
         }),
       });
+      log.sort((a, b) => b.startedAt - a.startedAt); // 최신 출조가 위로
       saveLog();
     }
     session = null;
@@ -558,29 +569,71 @@
   }
 
   // ---------- 기록 & 백업 ----------
+  // 기록 당시 루어 이름을 우선 (나중에 루어를 지우거나 이름을 바꿔도 기록은 그대로)
+  function logLureName(entry) {
+    return (id) => (entry.lureNames && entry.lureNames[id]) || (data.lures.find((l) => l.id === id) || {}).name || null;
+  }
+
   function renderLog() {
     let html = '<div class="section-title"><h2>출조 기록</h2></div>';
     if (!log.length) {
-      return html + '<div class="card empty small">아직 기록이 없어요. 오늘 탭에서 <b>현장 모드</b>를 시작하고 입질·조과를 눌러보세요.<br>쌓인 조과는 같은 필드·같은 계절 추천에 반영됩니다.</div>';
+      return html + '<div class="card empty small">아직 기록이 없어요. 오늘 탭에서 <b>현장 모드</b>를 시작하고 입질·조과를 눌러보세요.<br>"🏁 출조 종료"를 누르면 여기에 정리되고, 캘린더용으로 복사할 수 있어요.</div>';
     }
     const total = log.reduce((a, s) => a + s.catches.length, 0);
     const byLure = {};
     log.forEach((s) => s.catches.forEach((c) => { const k = c.lureName || catLabel(c.cat); byLure[k] = (byLure[k] || 0) + 1; }));
     const best = Object.keys(byLure).sort((a, b) => byLure[b] - byLure[a]).slice(0, 3);
     html += `<div class="card small">총 ${log.length}회 출조 · 🎣 ${total}마리${best.length ? `<br>베스트 루어: ${best.map((k) => `<b>${esc(k)}</b> ${byLure[k]}마리`).join(', ')}` : ''}</div>`;
+    const ICON = { nobite: '🙅', bite: '👀', catch: '🎣' };
     log.forEach((s) => {
-      const mins = Math.round((s.endedAt - s.startedAt) / 60000);
-      const dur = mins >= 60 ? `${Math.floor(mins / 60)}시간 ${mins % 60}분` : `${mins}분`;
-      const counts = {};
-      s.catches.forEach((c) => { const k = c.lureName || catLabel(c.cat); counts[k] = (counts[k] || 0) + 1; });
-      const bites = (s.events || []).filter((e) => e.type === 'bite').length;
-      html += `<div class="card item"><div class="body">
-        <h3>${esc(s.date)} · ${esc(s.fieldName)} <span class="badge">🎣 ${s.catches.length}</span></h3>
-        <p>${hhmm(s.startedAt)}~${hhmm(s.endedAt)} (${dur}) · 입질 ${bites}회</p>
-        ${Object.keys(counts).length ? `<div class="chips" style="margin-top:6px">${Object.keys(counts).map((k) => `<span class="chip">${esc(k)} ×${counts[k]}</span>`).join('')}</div>` : ''}
-      </div><div class="actions"><button class="icon-btn" data-action="delete-log" data-id="${esc(s.id)}" aria-label="기록 삭제">🗑️</button></div></div>`;
+      const st = E.tripStats(s);
+      const nameOf = logLureName(s);
+      const segName = (g) => (g.lureId && nameOf(g.lureId)) || catLabel(g.cat);
+      const hits = {};
+      st.segs.forEach((g) => g.events.forEach((t) => { if (t === 'catch') hits[segName(g)] = (hits[segName(g)] || 0) + 1; }));
+      const d = new Date(`${s.date}T00:00:00`);
+      let round = 0;
+      const steps = st.segs.map((g, gi) => {
+        let sep = '';
+        if (g.round !== round) { round = g.round; sep = `<li class="trip-move">📍 포인트 이동 (${round + 1}번째)</li>`; }
+        return `${sep}<li value="${gi + 1}"><span class="muted">${hhmm(g.start)}</span> <b>${esc(segName(g))}</b>${g.lureId && nameOf(g.lureId) ? ` <span class="muted small">(${esc(catLabel(g.cat))})</span>` : ''}
+          ${g.spot ? `<span class="small">@ ${esc(g.spot)}</span>` : ''} <span class="small muted">· ${E.durLabel(g.end - g.start)}</span> ${g.events.map((t) => ICON[t]).join('')}</li>`;
+      }).join('');
+      html += `<div class="card trip">
+        <div class="trip-head">
+          <h3>${d.getMonth() + 1}/${d.getDate()}(${'일월화수목금토'[d.getDay()]}) ${esc(s.fieldName)}</h3>
+          <span class="trip-catch${st.catches ? '' : ' zero'}">${st.catches ? `🎣 ${st.catches}마리` : '꽝'}</span>
+        </div>
+        <p class="small">${hhmm(s.startedAt)}~${hhmm(s.endedAt)} (${E.durLabel(st.duration)}) · 👀 입질 ${st.bites}회 · 루어 교체 ${st.switches}회 · 포인트 ${st.rounds}곳${s.auto ? ' · <span class="muted">자동 저장</span>' : ''}</p>
+        ${s.cond ? `<p class="small muted">🌤 ${esc(E.condLine(s.cond))}</p>` : ''}
+        ${Object.keys(hits).length ? `<div class="chips">${Object.keys(hits).map((k) => `<span class="chip hit">${esc(k)} ×${hits[k]}</span>`).join('')}</div>` : ''}
+        ${s.memo ? `<p class="small">📝 ${esc(s.memo)}</p>` : ''}
+        ${steps ? `<details class="trip-steps"${ui.openLog === s.id ? ' open' : ''}><summary class="small">🔁 로테이션 보기 (${st.segs.length}단계)</summary><ol>${steps}</ol></details>` : ''}
+        <div class="btn-row trip-actions">
+          <button class="btn primary sm" data-action="copy-log" data-id="${esc(s.id)}">📋 캘린더용 복사</button>
+          <button class="btn ghost sm" data-action="memo-log" data-id="${esc(s.id)}">📝 메모</button>
+          <button class="icon-btn" data-action="delete-log" data-id="${esc(s.id)}" aria-label="기록 삭제">🗑️</button>
+        </div>
+      </div>`;
     });
     return html;
+  }
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+    } catch (e) { /* 아래 방식으로 */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
   }
 
   function renderBackup() {
@@ -632,7 +685,14 @@
     const { action, kind, id } = b.dataset;
     if (action === 'start-session' || session) unlockAudio();
     if (action === 'start-session') {
-      session = { id: uid('t'), fieldId: ui.fieldId, date: dateStr(0), startedAt: Date.now(), round: 0, events: [] };
+      const cond = lastCond && lastCond.date === dateStr(0) ? lastCond : null;
+      session = {
+        id: uid('t'), fieldId: ui.fieldId, date: dateStr(0), startedAt: Date.now(), round: 0, events: [], roundStarts: {},
+        cond: cond && {
+          season: cond.season, waterTemp: cond.waterTemp, waterTempEstimated: cond.waterTempEstimated, airTemp: cond.airTemp,
+          sky: cond.sky, windMs: cond.windMs, wind: cond.wind, pressure: cond.pressure, clarity: cond.clarity, slot: cond.slot,
+        },
+      };
       restartTimer();
       saveSession(); render();
       setTimeout(() => { const live = document.querySelector('.live'); if (live) live.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
@@ -643,7 +703,7 @@
       }
     } else if (action === 'event' && session) {
       const cat = b.dataset.cat;
-      session.events.push({ t: Date.now(), type: b.dataset.type, cat, lureId: activeLure[cat] || null, round: session.round || 0 });
+      session.events.push({ t: Date.now(), type: b.dataset.type, cat, lureId: activeLure[cat] || null, round: session.round || 0, spot: session.currentSpot || '' });
       restartTimer();
       saveSession(); updateToday();
       if (navigator.vibrate) navigator.vibrate(b.dataset.type === 'catch' ? [60, 40, 60] : 30);
@@ -654,7 +714,9 @@
       session.timerExtra = 0;
       saveSession(); updateToday();
     } else if (action === 'next-round' && session) {
-      session.round = (session.round || 0) + 1; restartTimer(); saveSession(); updateToday();
+      session.round = (session.round || 0) + 1;
+      session.roundStarts = Object.assign({}, session.roundStarts, { [session.round]: Date.now() });
+      restartTimer(); saveSession(); updateToday();
     } else if (action === 'timer-plus' && session) {
       session.timerExtra = (session.timerExtra || 0) + 5; saveSession(); updateToday();
     } else if (action === 'timer-reset' && session) {
@@ -671,8 +733,25 @@
     } else if (action === 'end-session' && session) {
       const n = session.events.filter((ev) => ev.type === 'catch').length;
       if (confirm(session.events.length ? `출조를 종료하고 기록을 저장할까요? (🎣 ${n}마리)` : '기록 없이 현장 모드를 종료할까요?')) {
-        endSession(); render(); updateWakeLock();
+        const memo = session.events.length ? (prompt('오늘 출조 한 줄 메모 (비워도 돼요)', '') || '').trim() : '';
+        const saved = session.events.length > 0;
+        endSession({ memo }); updateWakeLock();
+        if (saved) { ui.tab = 'backup'; saveUi(); ui.openLog = log[0] && log[0].id; } // 방금 기록을 바로 보여주기
+        render();
       }
+    } else if (action === 'copy-log') {
+      const entry = log.find((x) => x.id === id);
+      if (!entry) return;
+      const text = E.tripReport(entry, logLureName(entry));
+      copyText(text).then((ok) => {
+        if (ok) { b.textContent = '✅ 복사됨 — 캘린더에 붙여넣기'; setTimeout(() => { b.textContent = '📋 캘린더용 복사'; }, 2500); }
+        else prompt('아래 내용을 길게 눌러 복사하세요', text);
+      });
+    } else if (action === 'memo-log') {
+      const entry = log.find((x) => x.id === id);
+      if (!entry) return;
+      const memo = prompt('출조 메모', entry.memo || '');
+      if (memo !== null) { entry.memo = memo.trim(); saveLog(); ui.openLog = id; render(); }
     } else if (action === 'delete-log') {
       if (confirm('이 출조 기록을 삭제할까요?')) { log = log.filter((s) => s.id !== id); saveLog(); render(); }
     } else if (action === 'add') openEditor(kind, null);
@@ -853,6 +932,13 @@
   // ---------- 시작 ----------
   const now = new Date();
   $('#todayLabel').textContent = `${now.getFullYear()}.${now.getMonth() + 1}.${now.getDate()} · 내 장비로 짜는 오늘의 작전`;
+  // 종료를 깜빡한 지난 출조는 마지막 기록 시각으로 자동 저장
+  if (session && session.date !== dateStr(0)) {
+    const last = session.events[session.events.length - 1];
+    const had = session.events.length > 0;
+    endSession({ endedAt: last ? last.t : session.startedAt, auto: true });
+    if (had) setTimeout(() => alert('종료하지 않은 지난 출조를 기록에 자동 저장했어요. 기록 탭에서 확인하세요.'), 300);
+  }
   // 날짜·시간대는 실행할 때마다 '지금' 기준으로
   ui.slot = defaultSlot();
   ui.dayOffset = 0;
