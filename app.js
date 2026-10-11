@@ -24,6 +24,17 @@
   }
 
   let data = readJSON(STORE_KEY, null) || clone(window.TACKLE_SEED);
+  // 새로 생긴 기본 필드를 기존 사용자 데이터에 한 번만 추가 (지운 필드는 다시 넣지 않음)
+  (function migratePresets() {
+    const v = data.version || 1;
+    const latest = window.TACKLE_SEED.version;
+    if (v >= latest) return;
+    window.TACKLE_SEED.fields.filter((f) => (f.addedIn || 1) > v).forEach((f) => {
+      if (!data.fields.some((x) => x.id === f.id)) data.fields.push(clone(f));
+    });
+    data.version = latest;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* noop */ }
+  })();
   const ui = Object.assign({ tab: 'today', fieldId: null, dayOffset: 0, slot: null, lureFilter: '' }, readJSON(UI_KEY, {}));
   let overrides = {};
   const weatherCache = {};
@@ -317,7 +328,7 @@
         <p class="hold-tip">${holdTip}</p>
         <dl class="kv">
           <dt>태클</dt><dd>${s ? `<b>${esc(s.name)}</b> <span class="small muted">${esc(s.rod || '')}</span>` : '<span class="warn">담당 태클 없음</span>'}</dd>
-          <dt>포인트</dt><dd>${sp ? `<b>${esc(sp.name)}</b>` : `<span class="small muted">${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`}</dd>
+          <dt>포인트</dt><dd>${sp ? `${(sp.cats || []).includes(cb.category) ? '⭐ ' : ''}<b>${esc(sp.name)}</b>${sp.note ? `<br><span class="small spot-note-view">${esc(sp.note)}</span>` : ''}` : `<span class="small muted">${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`}</dd>
           <dt>액션</dt><dd>${esc(cb.action)}${memo ? `<br><span class="small">📝 ${esc(memo)}</span>` : ''}</dd>
         </dl>
       </div>`;
@@ -468,7 +479,7 @@
       return `<div class="lure-line">${thumb(l.id, 'sm')}<span class="lure-name">${l.favorite ? '<span class="star">★</span> ' : ''}${esc(l.name)}</span> <span class="muted small">${esc([l.brand, l.size].filter(Boolean).join(' · '))}</span>${colors}</div>`;
     }).join('');
     const spots = cb.spots.length
-      ? cb.spots.map((sp) => `<b>${esc(sp.name)}</b> <span class="muted small">(${(sp.tags || []).map((t) => esc(E.STRUCTURES[t] || t)).join(', ')})</span>`).join('<br>')
+      ? cb.spots.map((sp) => `${(sp.cats || []).includes(cb.category) ? '⭐ ' : ''}<b>${esc(sp.name)}</b> <span class="muted small">(${(sp.tags || []).map((t) => esc(E.STRUCTURES[t] || t)).join(', ')})</span>${sp.note ? `<br><span class="small spot-note-view">${esc(sp.note)}</span>` : ''}`).join('<br>')
       : `<span class="muted small">추천 구조물: ${E.CATEGORIES[cb.category].spots.map((t) => E.STRUCTURES[t]).join(', ')}</span>`;
     const memos = cb.lures.map((x) => x.lure.memo).filter(Boolean);
     const action = esc(cb.action) + (memos.length ? `<br><span class="small">📝 ${esc(memos.join(' / '))}</span>` : '');
@@ -558,6 +569,7 @@
       html += `<div class="card item"><div class="body">
         <h3>${esc(f.name)} <span class="badge">${esc(E.LABELS.field[f.type] || f.type)}</span></h3>
         <p>${esc(f.region || '')}${f.lat != null && f.lat !== '' ? ` · ${esc(f.lat)}, ${esc(f.lon)}` : ' · 좌표 없음'} · 평소 ${esc(E.LABELS.clarity[f.clarity] || '')}</p>
+        ${f.memo ? `<p>📝 ${esc(f.memo)}</p>` : ''}
         <div class="chips" style="margin-top:6px">${(f.spots || []).map((s) => `<span class="chip">${esc(s.name)}</span>`).join('')}</div>
       </div>${itemActions('field', f.id)}</div>`;
     });
@@ -858,7 +870,11 @@
 
   function spotRow(s) {
     const tags = Object.keys(E.STRUCTURES).map((t) => `<button type="button" class="chip tag" data-tag="${t}" aria-pressed="${(s.tags || []).includes(t)}">${E.STRUCTURES[t]}</button>`).join('');
-    return `<div class="spot-row"><div class="top"><input type="text" class="spot-name" value="${esc(s.name)}" placeholder="포인트 이름 (예: 송전교 다리 밑)"><button type="button" class="icon-btn" data-action="del-spot" aria-label="포인트 삭제">✕</button></div><div class="chips">${tags}</div></div>`;
+    const cats = Object.keys(E.CATEGORIES).map((c) => `<button type="button" class="chip tag" data-spotcat="${c}" aria-pressed="${(s.cats || []).includes(c)}">${esc(E.CATEGORIES[c].short)}</button>`).join('');
+    return `<div class="spot-row"><div class="top"><input type="text" class="spot-name" value="${esc(s.name)}" placeholder="포인트 이름 (예: 송전교 다리 밑)"><button type="button" class="icon-btn" data-action="del-spot" aria-label="포인트 삭제">✕</button></div>
+      <div class="spot-sub">구조물</div><div class="chips">${tags}</div>
+      <div class="spot-sub">이 포인트 추천 루어 (선택)</div><div class="chips">${cats}</div>
+      <input type="text" class="spot-note" value="${esc(s.note || '')}" placeholder="메모 (예: 연안 10m 앞 험프, 무게감 있는 채비)"></div>`;
   }
 
   function openEditor(kind, item, newPhoto) {
@@ -891,6 +907,7 @@
       $('#editorTitle').textContent = item ? '필드 수정' : '필드 추가';
       body = text('name', '이름', it.name, '예: 이동저수지') +
         text('region', '지역', it.region, '예: 용인 처인구') +
+        area('memo', '필드 메모', it.memo, '예: 계곡형, 최대 수심 24m') +
         `<div class="two">${selectF('type', '유형', it.type || 'large', E.LABELS.field)}${selectF('clarity', '평소 물색', it.clarity || 'stained', E.LABELS.clarity)}</div>` +
         `<div class="two"><label>위도<input type="number" step="any" name="lat" value="${esc(it.lat == null ? '' : it.lat)}"></label><label>경도<input type="number" step="any" name="lon" value="${esc(it.lon == null ? '' : it.lon)}"></label></div>` +
         '<button type="button" class="btn ghost sm" data-action="geo">📍 지금 위치로 좌표 채우기</button>' +
@@ -984,10 +1001,12 @@
     } else {
       const num = (n) => (v(n) === '' ? null : Number(v(n)));
       obj = {
-        name: v('name'), region: v('region'), type: v('type'), clarity: v('clarity'), lat: num('lat'), lon: num('lon'),
+        name: v('name'), region: v('region'), memo: v('memo'), type: v('type'), clarity: v('clarity'), lat: num('lat'), lon: num('lon'),
         spots: Array.from(document.querySelectorAll('#spotList .spot-row')).map((r) => ({
           name: r.querySelector('.spot-name').value.trim(),
-          tags: Array.from(r.querySelectorAll('.tag[aria-pressed="true"]')).map((b) => b.dataset.tag),
+          tags: Array.from(r.querySelectorAll('.tag[data-tag][aria-pressed="true"]')).map((b) => b.dataset.tag),
+          cats: Array.from(r.querySelectorAll('.tag[data-spotcat][aria-pressed="true"]')).map((b) => b.dataset.spotcat),
+          note: r.querySelector('.spot-note').value.trim(),
         })).filter((s) => s.name),
       };
     }

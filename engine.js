@@ -16,6 +16,7 @@
     breakline: '브레이크라인',
     hump: '수중 험프',
     pier: '잔교·좌대',
+    wall: '직벽',
   };
 
   // 루어 카테고리별 조건 선호 프로파일
@@ -54,7 +55,7 @@
       time: { dawn: 1, day: 1, dusk: 1, night: -1 },
       clarity: { clear: 2, stained: 1, muddy: -2 },
       field: { large: 2, paid: 0 },
-      spots: ['inflow', 'riprap', 'shallow', 'breakline'],
+      spots: ['inflow', 'riprap', 'wall', 'shallow', 'breakline'],
       action: '탁·탁 강한 저킹 후 3~5초 확실한 스테이로 리액션 바이트 유도. 수온 낮을수록 스테이 길게.',
     },
     moving: {
@@ -78,7 +79,7 @@
       time: { dawn: 1, day: 1, dusk: 1, night: -1 },
       clarity: { clear: 0, stained: 2, muddy: 1 },
       field: { large: 2, paid: 0 },
-      spots: ['riprap', 'dam', 'breakline'],
+      spots: ['riprap', 'wall', 'dam', 'breakline'],
       action: '석축·바닥에 립을 부딪쳐 불규칙 액션(디플렉션) 만들기.',
     },
     bottom: {
@@ -114,7 +115,7 @@
       time: { dawn: 0, day: 2, dusk: 0, night: 0 },
       clarity: { clear: 2, stained: 0, muddy: -2 },
       field: { large: 0, paid: 3 },
-      spots: ['pier', 'bridge', 'overhang', 'breakline'],
+      spots: ['pier', 'bridge', 'wall', 'overhang', 'breakline'],
       action: '제자리 초미세 셰이킹 — 싱커는 바닥에 고정, 웜만 떨게.',
     },
     midstroll: {
@@ -276,7 +277,8 @@
     const pref = CATEGORIES[catId].spots;
     return field.spots
       .map((s) => {
-        let m = 0;
+        // 필드 정보에서 '이 포인트 추천 루어'로 지정된 카테고리면 최우선
+        let m = (s.cats || []).includes(catId) ? 20 : 0;
         (s.tags || []).forEach((tg) => {
           const k = pref.indexOf(tg);
           if (k >= 0) m += pref.length - k; // 앞쪽 선호 태그일수록 가중

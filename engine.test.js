@@ -271,3 +271,16 @@ test('추천 표시는 무게가 잘 맞는 태클에만', () => {
   const r = E.tackleFor({ name: '크랭크', size: '3/8oz', category: 'crank' }, setups);
   assert.deepStrictEqual(r.recommended.map((c) => c.setup.id).sort(), ['s3', 's4']); // 베이트 ML·M
 });
+
+// ---------- 포인트별 추천 루어 (용계저수지) ----------
+test('포인트에 지정한 추천 루어가 포인트 선택에 우선 반영된다', () => {
+  const f6 = SEED.fields.find((f) => f.id === 'f6');
+  assert.ok(f6 && f6.addedIn === 2 && SEED.version === 2);
+  const top = (cat) => E.bestSpots(cat, f6)[0].name;
+  assert.strictEqual(top('crank'), '제방 우측 취수탑 직벽');
+  assert.strictEqual(top('topwater'), '상류 섬 주위');
+  assert.strictEqual(top('cover'), '입구 3번째 골 (화장실 앞 험프)');
+  assert.strictEqual(top('midstroll'), '관리실 왼편 곶부리');
+  // 추천 지정이 없는 카테고리도 구조물 태그로 포인트를 찾는다
+  assert.ok(E.bestSpots('vertical', f6).length > 0);
+});

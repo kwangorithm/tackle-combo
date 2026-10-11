@@ -4,7 +4,7 @@
   'use strict';
 
   const SEED = {
-    version: 1,
+    version: 2,
     setups: [
       { id: 's1', name: '빅 탑워터·커버', type: 'bait', power: 'MH', rod: '리벨리온 69MH', reel: '15 메타늄 DC', line: '카본 16~20lb', categories: ['topwater', 'cover'], memo: '헤비커버 주변 탑워터 전용' },
       { id: 's2', name: '초장타 웜', type: 'bait', power: 'MH', rod: '19 아드레나 173MH', reel: '19 안타레스 HG', line: '카본 12lb', categories: ['bottom'], memo: '감도 위주 12lb 세팅' },
@@ -82,6 +82,23 @@
       },
     ],
   };
+
+  // 나중에 추가된 기본 필드: addedIn 버전보다 낮은 기존 사용자 데이터에 한 번만 넣어준다
+  SEED.fields.push({
+    id: 'f6', addedIn: 2, name: '용계저수지 (백야지)', region: '충북 음성군 금왕읍 용계리', type: 'large', clarity: 'clear',
+    lat: 36.97, lon: 127.6,
+    memo: '13만여 평 계곡형, 최대 수심 24m — 댐 낚시급 손맛. 자세한 포인트 설명은 저장소의 yonggye.md',
+    spots: [
+      { name: '관리실 왼편 곶부리', tags: ['shallow', 'breakline'], cats: ['midstroll', 'minnow', 'moving'],
+        note: '곶부리 왼편 섀로우, 오른편 골자리 — 지그헤드·서스펜드 미노우·스피너베이트' },
+      { name: '상류 섬 주위', tags: ['shallow', 'inflow', 'breakline'], cats: ['topwater', 'bottom', 'moving'],
+        note: '섬 중심 물골, 대부분 섀로우 — 탑워터·스플릿샷·스피너베이트' },
+      { name: '입구 3번째 골 (화장실 앞 험프)', tags: ['hump', 'breakline'], cats: ['midstroll', 'cover', 'bottom'],
+        note: '연안 10여 m 앞 험프, 바닥 탐색 — 지그헤드·러버지그·텍사스 등 무게감 있는 채비' },
+      { name: '제방 우측 취수탑 직벽', tags: ['wall', 'dam'], cats: ['crank', 'minnow', 'moving'],
+        note: '진입 어렵고 협소, 워킹으로 직벽 공략 가능한 유일한 곳 — 크랭크·서스펜드 미노우·바이브·스피너베이트' },
+    ],
+  });
 
   if (typeof module !== 'undefined' && module.exports) module.exports = SEED;
   else root.TACKLE_SEED = SEED;

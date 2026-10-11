@@ -202,6 +202,8 @@ dialog h2 { font-size: 18px; }
 .spot-row { background: var(--surface-2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
 .spot-row .top { display: flex; gap: 6px; }
 .spot-row input { background: var(--surface); }
+.spot-sub { font-size: 11px; font-weight: 700; color: var(--muted); margin-top: 2px; }
+.spot-note-view { color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; background: var(--surface); padding-top: 8px; }
 
 /* rotation & live mode */
